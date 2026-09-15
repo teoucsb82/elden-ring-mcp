@@ -74,3 +74,41 @@ test('sourcesStatus reports sync and counts', () => {
   assert.equal(status.shipped?.pages, 6);
   assert.equal(status.local, null);
 });
+
+const HINT = 'No page matched in the shipped data or local cache. Try search, or pass fetch: true to cache the Fextralife page.';
+
+test('itemStats skips kinds whose table cannot express the filter', () => {
+  const scaled = itemStats(dbs(), { scaling_stat: 'int', min_scaling: 'C' }) as any;
+  assert.deepEqual(scaled.rows.map((r: any) => r.kind), ['weapon']);
+  const byStrReq = itemStats(dbs(), { max_req: { str: 60 } }) as any;
+  assert.deepEqual(byStrReq.rows.map((r: any) => r.kind), ['weapon']);
+  const byIntReq = itemStats(dbs(), { max_req: { int: 60 } }) as any;
+  assert.deepEqual(byIntReq.rows.map((r: any) => r.kind), ['weapon', 'spell']);
+});
+
+test('itemStats ignores stat keys and scaling stats outside the allow-list', () => {
+  const injected = { int: 60, 'x_req, 0) OR 1=1 --': 1 } as unknown as Partial<Record<'int', number>>;
+  const byName = itemStats(dbs(), { kind: 'weapon', max_req: injected }) as any;
+  assert.deepEqual(byName.rows.map((r: any) => r.name), ["Azur's Glintstone Staff"]);
+  const badStat = itemStats(dbs(), { kind: 'weapon', scaling_stat: 'hp' as any, min_scaling: 'C' }) as any;
+  assert.deepEqual(badStat.rows.map((r: any) => r.name), ["Azur's Glintstone Staff"]);
+});
+
+test('itemStats ignores an out-of-range min_scaling instead of inverting it', () => {
+  const rows = (itemStats(dbs(), { kind: 'weapon', scaling_stat: 'int', min_scaling: 'Z' }) as any).rows;
+  assert.deepEqual(rows.map((r: any) => r.name), ["Azur's Glintstone Staff"]);
+});
+
+test('getPage returns not_found when the requested section matches nothing', () => {
+  assert.deepEqual(getPage(dbs(), "Azur's Glintstone Staff", 'no such section'), { not_found: true, query: "Azur's Glintstone Staff", hint: HINT });
+});
+
+test('a strong local match beats a weak full-text hit in shipped data', () => {
+  const local = memoryDb();
+  upsertPage(local, { source: 'fextralife', title: 'Cuckoo', url: 'https://eldenring.wiki.fextralife.com/Cuckoo', revid: null, fetchedAt: '2026-09-15T00:00:00.000Z', wikitext: null, markdown: '## Location\nLiurnia of the Lakes', license: 'All rights reserved (Fextralife). Local cache only; never redistributed.' });
+  const shipped = buildFixtureDb();
+  assert.equal(resolveName({ shipped, local: null }, 'Cuckoo')?.match, 'search');
+  const resolved = resolveName({ shipped, local }, 'Cuckoo')!;
+  assert.equal(resolved.match, 'exact');
+  assert.equal(resolved.provenance.source, 'fextralife');
+});

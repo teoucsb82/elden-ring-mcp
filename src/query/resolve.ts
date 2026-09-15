@@ -39,7 +39,7 @@ function resolveIn(db: Db, name: string): Resolved | null {
 
   const redirect = db.prepare('SELECT to_title, fragment FROM redirects WHERE from_title = ? COLLATE NOCASE').get(name) as { to_title: string; fragment: string | null } | undefined;
   if (redirect) {
-    const target = db.prepare(`SELECT ${PROVENANCE_COLUMNS} FROM pages WHERE title = ?`).get(redirect.to_title) as PageRecord | undefined;
+    const target = db.prepare(`SELECT ${PROVENANCE_COLUMNS} FROM pages WHERE title = ? COLLATE NOCASE`).get(redirect.to_title) as PageRecord | undefined;
     if (target) return toResolved(db, target, 'redirect', redirect.fragment);
   }
 

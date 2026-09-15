@@ -41,7 +41,20 @@ export function getPage(dbs: Dbs, title: string, section?: string) {
   const r = resolveName(dbs, title);
   if (!r) return notFound(title);
   const heading = section ? new RegExp(escapeRegex(section), 'i') : r.fragment ? new RegExp(`^${escapeRegex(r.fragment)}$`, 'i') : undefined;
-  return { provenance: r.provenance, match: r.match, sections: sectionsOf(r, heading) };
+  const sections = sectionsOf(r, heading);
+  // An asked-for section that matches nothing is a miss, not an empty page.
+  if (section && !sections.length) return notFound(title);
+  return { provenance: r.provenance, match: r.match, sections };
+}
+
+/** Stored prereqs are always a JSON array, but a malformed row must not take the whole answer down. */
+function parsePrereqs(json: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 export function whereIs(dbs: Dbs, name: string) {
@@ -52,7 +65,7 @@ export function whereIs(dbs: Dbs, name: string) {
   return {
     provenance: r.provenance,
     match: r.match,
-    acquisition: row ? { ...row, prereqs: JSON.parse(row.prereqs) as string[], missable: row.missable === 1 } : null,
+    acquisition: row ? { ...row, prereqs: parsePrereqs(row.prereqs), missable: row.missable === 1 } : null,
     sections: sectionsOf(r, /acquisition|location|where to find|how to get/i),
   };
 }
@@ -67,7 +80,14 @@ export function questSteps(dbs: Dbs, npc: string) {
 
 const KIND_TABLE = { weapon: 'weapons', spell: 'spells', talisman: 'talismans', armor: 'armor' } as const;
 type Kind = keyof typeof KIND_TABLE;
-type Stat = 'str' | 'dex' | 'int' | 'fai' | 'arc';
+export const STATS = ['str', 'dex', 'int', 'fai', 'arc'] as const;
+type Stat = (typeof STATS)[number];
+
+/** Caller-supplied keys become column names, so nothing outside this list may reach SQL. */
+const isStat = (value: string): value is Stat => (STATS as readonly string[]).includes(value);
+
+/** Requirement columns each table actually has. A kind that cannot express a supplied filter is skipped, never returned unfiltered. */
+const REQ_STATS: Record<Kind, readonly Stat[]> = { weapon: STATS, spell: ['int', 'fai', 'arc'], talisman: [], armor: [] };
 
 function provenanceOf(db: Db, pageId: number): Provenance {
   return db.prepare('SELECT source, title, url, revid, fetched_at, license FROM pages WHERE id = ?').get(pageId) as Provenance;
@@ -82,21 +102,27 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
       (r.db.prepare(`SELECT * FROM ${table} WHERE page_id = ?`).all(r.pageId) as Record<string, unknown>[]).map((row) => ({ kind, ...row, provenance: r.provenance })));
     return rows.length ? { rows } : notFound(filter.name);
   }
+  // Both filters are dropped unless every part of them is valid: a bad stat name or grade must never
+  // silently become a different (or inverted) filter.
+  const scalingStat = filter.scaling_stat && isStat(filter.scaling_stat) ? filter.scaling_stat : null;
+  const gradeIndex = filter.min_scaling ? SCALING_ORDER.indexOf(filter.min_scaling.toUpperCase() as (typeof SCALING_ORDER)[number]) : -1;
+  const scaling = scalingStat && gradeIndex >= 0 ? { stat: scalingStat, allowed: SCALING_ORDER.slice(gradeIndex) } : null;
+  const maxReq = Object.entries(filter.max_req ?? {}).filter((entry): entry is [Stat, number] => isStat(entry[0]) && typeof entry[1] === 'number');
+
   const kinds = filter.kind ? [filter.kind] : (Object.keys(KIND_TABLE) as Kind[]);
   const rows: (Record<string, unknown> & { kind: string; provenance: Provenance })[] = [];
   for (const db of [dbs.shipped, dbs.local]) {
     if (!db) continue;
     for (const kind of kinds) {
+      if (scaling && kind !== 'weapon') continue;
+      if (maxReq.some(([stat]) => !REQ_STATS[kind].includes(stat))) continue;
       const where: string[] = [];
       const params: (string | number)[] = [];
-      if (filter.scaling_stat && filter.min_scaling && kind === 'weapon') {
-        const allowed = SCALING_ORDER.slice(SCALING_ORDER.indexOf(filter.min_scaling.toUpperCase() as (typeof SCALING_ORDER)[number]));
-        where.push(`${filter.scaling_stat}_scale IN (${allowed.map(() => '?').join(', ')})`);
-        params.push(...allowed);
+      if (scaling) {
+        where.push(`${scaling.stat}_scale IN (${scaling.allowed.map(() => '?').join(', ')})`);
+        params.push(...scaling.allowed);
       }
-      for (const [stat, max] of Object.entries(filter.max_req ?? {}) as [Stat, number][]) {
-        if (kind === 'weapon' || (kind === 'spell' && ['int', 'fai', 'arc'].includes(stat))) { where.push(`coalesce(${stat}_req, 0) <= ?`); params.push(max); }
-      }
+      for (const [stat, max] of maxReq) { where.push(`coalesce(${stat}_req, 0) <= ?`); params.push(max); }
       const sql = `SELECT * FROM ${KIND_TABLE[kind]}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY name LIMIT ?`;
       for (const row of db.prepare(sql).all(...params, limit) as Record<string, unknown>[]) rows.push({ kind, ...row, provenance: provenanceOf(db, row.page_id as number) });
     }
