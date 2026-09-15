@@ -30,10 +30,14 @@ export function createFandom(opts: FandomOptions = {}) {
 
   async function* paged(params: Record<string, string>): AsyncGenerator<Json> {
     let cont: Record<string, string> = {};
+    let lastContKey: string | null = null;
     for (;;) {
       const json = await api({ ...params, ...cont });
       yield json;
       if (!json.continue) return;
+      const nextContKey = JSON.stringify(json.continue);
+      if (nextContKey === lastContKey) throw new Error('MediaWiki pagination stalled: repeated continuation token');
+      lastContKey = nextContKey;
       cont = json.continue;
     }
   }

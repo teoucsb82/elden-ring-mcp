@@ -41,8 +41,20 @@ export function createHttp(opts: HttpOptions): (url: string) => Promise<string> 
       if (res.status === 200) return res.text();
       const retryable = res.status === 429 || res.status >= 500;
       if (!retryable || attempt >= retries) throw new HttpError(res.status, url);
-      const retryAfter = Number(res.headers.get('retry-after'));
-      await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** attempt);
+      const retryAfterHeader = res.headers.get('retry-after');
+      const retryAfterSeconds = Number(retryAfterHeader);
+      let retryDelay: number;
+      if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+        retryDelay = retryAfterSeconds * 1000;
+      } else {
+        const retryAfterDate = retryAfterHeader ? Date.parse(retryAfterHeader) : NaN;
+        if (Number.isFinite(retryAfterDate)) {
+          retryDelay = Math.min(60_000, Math.max(0, retryAfterDate - Date.now()));
+        } else {
+          retryDelay = 1000 * 2 ** attempt;
+        }
+      }
+      await sleep(retryDelay);
     }
   };
 }

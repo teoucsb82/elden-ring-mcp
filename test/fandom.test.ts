@@ -74,3 +74,19 @@ test('MediaWiki error payload throws', async () => {
   const fandom = createFandom({ fetchImpl: async () => response(200, { error: { code: 'badvalue', info: 'nope' } }), sleep: noSleep, minIntervalMs: 0 });
   await assert.rejects(fandom.fetchPages(['X']), /MediaWiki badvalue: nope/);
 });
+
+test('listRevisions throws instead of looping when the continuation repeats', async () => {
+  const fetchImpl: FetchLike = async () => response(200, { continue: { gapcontinue: 'A', continue: 'gapcontinue||' }, query: { pages: [{ title: 'A', lastrevid: 1 }] } });
+  const fandom = createFandom({ fetchImpl, sleep: noSleep, minIntervalMs: 0 });
+  await assert.rejects(async () => { for await (const _ of fandom.listRevisions()) { /* drain */ } }, /pagination stalled/);
+});
+
+test('http honors a date-valued Retry-After', async () => {
+  const sleeps: number[] = [];
+  let calls = 0;
+  const when = new Date(Date.now() + 5000).toUTCString();
+  const fetchImpl: FetchLike = async () => (++calls === 1 ? response(429, '', { 'retry-after': when }) : response(200, 'ok'));
+  const get = createHttp({ userAgent: 'ua', minIntervalMs: 0, fetchImpl, sleep: async (ms) => { sleeps.push(ms); } });
+  assert.equal(await get('https://x'), 'ok');
+  assert.ok(sleeps.some((ms) => ms > 3000 && ms <= 5000), `expected a ~5s sleep, got ${sleeps.join(',')}`);
+});
