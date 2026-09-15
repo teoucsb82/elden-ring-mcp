@@ -6,7 +6,8 @@ import { createHttp, HttpError, type FetchLike } from './http.js';
 
 export const FEXTRALIFE_LICENSE = 'All rights reserved (Fextralife). Local cache only; never redistributed.';
 
-export const fextralifeUrl = (title: string) => `https://eldenring.wiki.fextralife.com/${title.trim().replace(/\s+/g, '+')}`;
+export const fextralifeUrl = (title: string) =>
+  `https://eldenring.wiki.fextralife.com/${title.trim().split(/\s+/).map(encodeURIComponent).join('+')}`;
 
 const turndown = new TurndownService({ headingStyle: 'atx', bulletListMarker: '-' });
 

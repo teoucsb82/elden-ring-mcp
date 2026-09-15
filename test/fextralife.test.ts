@@ -21,6 +21,11 @@ test('fextralifeUrl uses + for spaces', () => {
   assert.equal(fextralifeUrl("Azur's Glintstone Staff"), "https://eldenring.wiki.fextralife.com/Azur's+Glintstone+Staff");
 });
 
+test('fextralifeUrl percent-encodes path, query and fragment characters', () => {
+  assert.equal(fextralifeUrl('Weird/Title?x=1#frag'), 'https://eldenring.wiki.fextralife.com/Weird%2FTitle%3Fx%3D1%23frag');
+  assert.equal(fextralifeUrl('../secret'), 'https://eldenring.wiki.fextralife.com/..%2Fsecret');
+});
+
 test('htmlToWikiMarkdown keeps only the content block with atx headings and no scripts', () => {
   const md = htmlToWikiMarkdown(HTML)!;
   assert.match(md, /^## Where to find Azur's Glintstone Staff/m);
