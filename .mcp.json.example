@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "elden-ring": {
+      "command": "npx",
+      "args": ["tsx", "src/server/mcp-server.ts"],
+      "cwd": "/absolute/path/to/elden-ring-mcp"
+    }
+  }
+}
