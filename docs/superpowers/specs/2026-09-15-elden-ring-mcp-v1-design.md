@@ -193,3 +193,13 @@ Rate limiting: max 1 request/second per source, honor `Retry-After`/`maxlag`, se
 - All 7 tools work in `npm run smoke`.
 - These real questions from the 2026-09-14/15 session answer with provenance from the shipped db (or the local cache, if Fandom lacks the detail), with no live fetch at question time: "where is Azur's Glintstone Staff" (`where_is`), "Sellen quest steps" (`quest_steps`), "what boosts Comet Azur" (`search` over effect text), "Magma Wyrm Makar location" (`boss`), "Graven-School Talisman location" (`where_is`).
 - Incremental sync run twice in a row: second run fetches 0 unchanged pages.
+
+## Revisions (2026-09-15, during planning)
+
+1. Change detection uses allpages `lastrevid` comparison instead of `recentchanges`.
+2. `data/elden-ring.db` is published as a GitHub Release asset, not committed (≈50 MB binary). `npm run fetch-data` downloads it.
+3. Provenance is stored on `pages`; typed rows join via `page_id`.
+4. The local cache db is queried as a separate handle rather than ATTACHed.
+5. `bosses` has no resistances (not in Fandom infobox); `drops` is a text column; no `drops` table.
+6. Data license is CC BY-SA 3.0 (Fandom), not 4.0.
+
