@@ -1,0 +1,36 @@
+name: weekly-data
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: Restore previous db
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: npm run fetch-data || echo "no previous release; full build"
+      - run: npm run build
+      - run: npm run attribution
+      - name: Publish release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          TAG="data-$(date -u +%Y.%m.%d)"
+          gh release create "$TAG" data/elden-ring.db --title "$TAG" --notes-file data/CHANGELOG-data.md
+      - name: Open PR with changelog
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: data/weekly
+          commit-message: 'data: weekly sync'
+          title: 'data: weekly sync'
+          body: 'Automated Fandom sync. Release: data-${{ github.run_id }}. See data/CHANGELOG-data.md.'
+          add-paths: |
+            data/CHANGELOG-data.md
+            data/ATTRIBUTION.md

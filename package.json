@@ -11,6 +11,7 @@
     "extract": "tsx scripts/extract.ts",
     "build": "tsx scripts/build.ts",
     "fetch-data": "tsx scripts/fetch-data.ts",
+    "attribution": "tsx scripts/attribution.ts",
     "mcp": "tsx src/server/mcp-server.ts",
     "smoke": "tsx scripts/smoke-mcp.ts",
     "test": "node --import tsx --test test/*.test.ts",
