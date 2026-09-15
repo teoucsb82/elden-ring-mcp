@@ -42,6 +42,7 @@ export function wikitextToMarkdown(wikitext: string): string {
   text = text.replace(/<ref[^>]*\/>/gi, '').replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, '');
   text = text.replace(/<gallery[\s\S]*?<\/gallery>/gi, '');
   text = stripTables(stripTemplates(text));
+  text = text.replace(/<br\s*\/?>/gi, '\n');
   const lines = text.split('\n').map((line) => {
     const heading = /^(={2,6})\s*(.*?)\s*\1\s*$/.exec(line);
     if (heading) return `${'#'.repeat(heading[1].length)} ${heading[2]}`;

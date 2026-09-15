@@ -41,6 +41,12 @@ test('numbered lists with nested bullets', () => {
   assert.match(md, /^ {2}- Sellen can be found in the cellar/m);
 });
 
+test('a <br/> before a list marker still produces a list item', () => {
+  const md = wikitextToMarkdown("Drops: Item A<br/>* Item B\n\n'''Bold lead''' stays bold.");
+  assert.match(md, /^- Item B$/m);
+  assert.match(md, /\*\*Bold lead\*\* stays bold\./);
+});
+
 test('plainText flattens inline markup', () => {
   assert.equal(plainText("Boosts [[Comet Azur]] by 15%. Increases {{stat|fp}} [[FP]] consumption"), 'Boosts Comet Azur by 15%. Increases FP consumption');
 });
