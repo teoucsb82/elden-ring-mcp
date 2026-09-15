@@ -39,6 +39,26 @@ test('quest steps: numbered locations with nested actions and quest breakers', (
   assert.equal(steps[2].breaks_quest, 'Attacking Sellen here will fail the questline.');
 });
 
+test('benign "permanently" does not mark an item missable', () => {
+  const a = parseAcquisition('Found on a corpse in the cellar. This talisman permanently increases stamina.');
+  assert.equal(a.missable, false);
+  assert.equal(a.method, 'ground');
+});
+
+test('"interacting with" is a ground pickup, not a quest', () => {
+  assert.equal(parseAcquisition('Obtained by interacting with the corpse on the balcony.').method, 'ground');
+});
+
+test('a generic "nearest site of grace" phrase yields no grace name', () => {
+  assert.equal(parseAcquisition('Warp to Uhl Palace Ruins, then head to the nearest site of grace.').nearest_grace, null);
+});
+
+test('benign "permanently" in a quest bullet stays an action, not a quest-breaker', () => {
+  const steps = parseQuestSteps('1. Roundtable Hold\n  - Talk to him; the gift permanently increases your rune gain.');
+  assert.equal(steps[0].breaks_quest, null);
+  assert.match(steps[0].action, /permanently increases/);
+});
+
 test('extractors write acquisition and quest rows', () => {
   const db = memoryDb();
   for (const [title, text] of [["Azur's Glintstone Staff", AZUR_STAFF], ['Sorceress Sellen', SELLEN_QUEST]] as const) {

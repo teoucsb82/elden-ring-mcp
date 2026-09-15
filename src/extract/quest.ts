@@ -9,7 +9,7 @@ export interface QuestStep {
   breaks_quest: string | null;
 }
 
-export const BREAK_PATTERN = /\b(fail(s|ed)? the quest(line)?|will fail|locks? (you )?out|locked out|cannot be completed|quest(line)? (will )?end|permanently|missable)\b/i;
+export const BREAK_PATTERN = /\b(fail(s|ed)? the quest(line)?|will fail|locks? (you )?out|locked out|cannot be completed|quest(line)? (will )?end|permanently (?:lost|lose|loses|missed|missable|unavailable|unobtainable|fail(?:s|ed)?|locked|unable|gone)|missable)\b/i;
 
 /** Parses "1. Location" items with nested "- action" bullets (Fandom "Questline progression"). */
 export function parseQuestSteps(markdown: string): QuestStep[] {
