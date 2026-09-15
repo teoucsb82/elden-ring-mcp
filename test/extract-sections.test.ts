@@ -1,0 +1,50 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { memoryDb } from './helpers.js';
+import { upsertPage } from '../src/store/pages.js';
+import { runExtractors } from '../src/extract/run.js';
+import { parseAcquisition } from '../src/extract/acquisition.js';
+import { parseQuestSteps } from '../src/extract/quest.js';
+import { wikitextToMarkdown } from '../src/wikitext/markdown.js';
+import { splitSections } from '../src/wikitext/sections.js';
+import { AZUR_CROWN, AZUR_STAFF, SELLEN_QUEST } from './fixtures/wikitext.js';
+
+const section = (wikitext: string, heading: string) => splitSections(wikitextToMarkdown(wikitext)).find((s) => s.heading === heading)!.markdown;
+
+test('acquisition: ground pickup with nearest grace', () => {
+  const a = parseAcquisition(section(AZUR_STAFF, 'Acquisition'));
+  assert.equal(a.method, 'ground');
+  assert.equal(a.nearest_grace, 'Debate Parlor');
+  assert.equal(a.missable, false);
+});
+
+test('acquisition: quest prerequisite sentence captured', () => {
+  const a = parseAcquisition(section(AZUR_CROWN, 'Acquisition'));
+  assert.equal(a.method, 'quest');
+  assert.deepEqual(a.prereqs, ["- Obtained upon completing Sorceress Sellen's questline, then returning to the spot where Azur was found."]);
+});
+
+test('acquisition: missable and drop detection', () => {
+  const a = parseAcquisition('Dropped by the boss. This item is missable after the capital burns.');
+  assert.equal(a.method, 'drop');
+  assert.equal(a.missable, true);
+});
+
+test('quest steps: numbered locations with nested actions and quest breakers', () => {
+  const steps = parseQuestSteps(section(SELLEN_QUEST, 'Questline progression'));
+  assert.equal(steps.length, 3);
+  assert.deepEqual(steps[0], { step_ord: 1, location: 'Waypoint Ruins', action: 'Sellen can be found in the cellar after defeating the Mad Pumpkin Head. Select "I wish to learn glintstone sorceries".', breaks_quest: null });
+  assert.equal(steps[2].location, 'Witchbane Ruins');
+  assert.match(steps[2].action, /speak to the shackled Sellen/);
+  assert.equal(steps[2].breaks_quest, 'Attacking Sellen here will fail the questline.');
+});
+
+test('extractors write acquisition and quest rows', () => {
+  const db = memoryDb();
+  for (const [title, text] of [["Azur's Glintstone Staff", AZUR_STAFF], ['Sorceress Sellen', SELLEN_QUEST]] as const) {
+    upsertPage(db, { source: 'fandom', title, url: 'u', revid: 1, fetchedAt: '2026-09-15T00:00:00.000Z', wikitext: text, markdown: null, license: 'CC BY-SA 3.0 (eldenring.fandom.com)' });
+  }
+  runExtractors(db);
+  assert.deepEqual(db.prepare('SELECT method, nearest_grace, missable FROM acquisition').get(), { method: 'ground', nearest_grace: 'Debate Parlor', missable: 0 });
+  assert.equal((db.prepare("SELECT count(*) AS n FROM quests WHERE npc = 'Sorceress Sellen'").get() as { n: number }).n, 3);
+});
