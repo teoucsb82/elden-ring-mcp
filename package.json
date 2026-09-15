@@ -5,7 +5,7 @@
   "type": "module",
   "license": "MIT",
   "description": "Elden Ring lookups (locations, quests, stats, bosses) from a versioned, attributed wiki snapshot, served as MCP tools",
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22" },
   "scripts": {
     "sync": "tsx scripts/sync.ts",
     "extract": "tsx scripts/extract.ts",

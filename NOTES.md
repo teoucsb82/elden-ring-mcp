@@ -7,3 +7,4 @@
 - Fandom Infobox Boss lacks resistances; bosses table stores location/hp/runes/drops.
 - Quest steps parsed from Fandom "Questline progression" lists.
 - Found on day one: Fandom and Fextralife disagree on Graven-School Talisman (+8% vs +4%). Provenance on every answer is why.
+- Node 20 segfaults with better-sqlite3 v13 under tsx; project pins Node 24 (.nvmrc) and requires >=22.
