@@ -678,9 +678,12 @@ test('a cached Fextralife copy is returned when the caller asked to fetch, and l
   assert.equal(plain.alternates[0].source, 'fextralife');
 
   const fetched = getPage(dbs, 'Uchigatana', undefined, 'base', { preferLocal: true }) as
-    { provenance: Provenance; alternates: Provenance[]; dlc?: boolean | null };
+    { provenance: Provenance; alternates: Provenance[]; dlc?: boolean | null; has_dlc_sections?: boolean | null };
   assert.equal(fetched.provenance.source, 'fextralife');
   assert.equal(fetched.dlc, null, 'a cached page is unclassified even when Fandom classified its twin');
+  // Both flags or neither: has_dlc_sections: false on a row the classifier never read asserts "this
+  // page contains no DLC material", which is exactly the claim the null dlc above refuses to make.
+  assert.equal(fetched.has_dlc_sections, null, 'a cached page carries neither dlc flag, not a false one');
   assert.equal(fetched.alternates[0].source, 'fandom');
 });
 

@@ -1,5 +1,5 @@
 import type { Db } from '../db/open.js';
-import { DEFAULT_DLC_MODE, dlcOf, dlcPredicate, type Dbs, type DlcMode } from './dbs.js';
+import { DEFAULT_DLC_MODE, dlcOf, dlcPredicate, hasDlcSectionsOf, type Dbs, type DlcMode } from './dbs.js';
 
 export interface Provenance {
   source: string;
@@ -18,8 +18,12 @@ export interface Resolved {
   fragment: string | null;
   /** null when the page was never classified (Fextralife cache): unknown, not base game. */
   dlc: boolean | null;
-  /** Always false for Fextralife rows: the classifier never runs on cached pages, wiki marker or not. */
-  hasDlcSections: boolean;
+  /**
+   * null on the same rows `dlc` is null on: the classifier never runs on a cached Fextralife page, so
+   * its stored 0 is the column default, not a finding. compact() then drops the field entirely, which
+   * is what README and INSTRUCTIONS already promise - a cached page carries neither flag.
+   */
+  hasDlcSections: boolean | null;
   /**
    * The same title, exactly, in the db(s) this answer did not come from — empty when only one holds
    * it. Fandom and Fextralife disagree on numbers often enough that the server's own instructions
@@ -53,9 +57,14 @@ const PROVENANCE_COLUMNS = 'id, source, title, url, revid, fetched_at, license, 
 type PageRecord = Provenance & { id: number; dlc: number; has_dlc_sections: number };
 
 /** `alternates` is filled in by resolveName, which is the only layer that can see more than one db. */
-const toResolved = (db: Db, row: PageRecord, match: Resolved['match'], fragment: string | null = null, alternates: Provenance[] = []): Resolved => {
+const toResolved = (db: Db, row: PageRecord, match: Resolved['match'], fragment: string | null = null): Resolved => {
   const { id, dlc, has_dlc_sections, ...provenance } = row;
-  return { db, pageId: id, provenance, match, fragment, dlc: dlcOf(provenance.source, dlc), hasDlcSections: has_dlc_sections === 1, alternates };
+  return {
+    db, pageId: id, provenance, match, fragment,
+    dlc: dlcOf(provenance.source, dlc),
+    hasDlcSections: hasDlcSectionsOf(provenance.source, has_dlc_sections),
+    alternates: [],
+  };
 };
 
 /** Quotes each word so user text can't inject FTS5 syntax. */

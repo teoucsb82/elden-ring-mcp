@@ -436,7 +436,8 @@ Tests:
 | `src/sources/fandom.ts` | category membership crawl (`listDlcCategoryTitles`) |
 | `src/sync.ts` | write `dlc_categories`; does not run the classifier itself (see §5) |
 | `scripts/sync-categories.ts` | new — refreshes `dlc_categories` alone and reclassifies |
-| `scripts/extract.ts`, `scripts/build.ts` | re-render sections, then classify after `runExtractors` |
+| `scripts/extract.ts` | re-render every page's sections, then classify after `runExtractors` |
+| `scripts/build.ts` | classify after re-extracting the changed pages; it does **not** re-render, so `.github/workflows/weekly-data.yml` runs `npm run extract` after `npm run build` to pick up renderer changes |
 | `scripts/report.ts` | new — shared `printDlcReport()` console output |
 | `src/wikitext/markdown.ts` | `substituteProductNames` — renders `{{PAGENAME}}` and the product-name templates instead of stripping them, so rendered prose (tool results, full-text search) keeps the product names; `classifyDlc` is unaffected, since it reads `pages.wikitext` directly, never rendered markdown |
 | `src/store/pages.ts` | `rerenderSections` — re-renders every page's markdown from stored wikitext without a re-fetch |

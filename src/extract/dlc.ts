@@ -74,8 +74,7 @@ const LEAD_END = /^[ \t]*==/m;
 const LEAD_MARKERS: RegExp[] = [
   new RegExp(IN_SE, 'i'),
   new RegExp(String.raw`\bin\s+\{\{\s*ER\s*\}\}\s*(?:<i>)?\s*:\s*(?:</i>)?\s*${SOTE}`, 'i'),   // in {{ER}}: {{SotE}}
-  new RegExp(String.raw`\bin\s+(?:the\s+)?${SOTE}`, 'i'),                                       // in {{SotE}} / in the {{SotE}} expansion
-  new RegExp(String.raw`\bincluded\s+in\s+(?:the\s+)?${SOTE}`, 'i'),                            // in {{ER}}, included in the {{SotE}} DLC
+  new RegExp(String.raw`\bin\s+(?:the\s+)?${SOTE}`, 'i'),                                       // in {{SotE}} / in the {{SotE}} expansion / included in the {{SotE}} DLC
 ];
 /**
  * The same predicate form with the plain article link instead of a template, the spelling no template

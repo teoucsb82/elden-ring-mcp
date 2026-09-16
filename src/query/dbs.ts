@@ -49,6 +49,13 @@ export const dlcOf = (source: string, dlc: number): boolean | null =>
   source === UNCLASSIFIED_SOURCE ? null : dlc === 1;
 
 /**
+ * Same test, same reason: has_dlc_sections holds the column default on an unclassified row, so
+ * reporting false there asserts "this page contains no DLC material" on a page nothing ever read.
+ */
+export const hasDlcSectionsOf = (source: string, hasDlcSections: number): boolean | null =>
+  source === UNCLASSIFIED_SOURCE ? null : hasDlcSections === 1;
+
+/**
  * Returns a constant SQL fragment — never caller text — so composing it into a query cannot inject.
  * `alias` names the pages table in queries that join it under a short name.
  */

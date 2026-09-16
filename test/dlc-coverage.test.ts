@@ -7,8 +7,8 @@ import { whereIs } from '../src/query/lookups.js';
 const DB_PATH = 'data/elden-ring.db';
 const hasDb = existsSync(DB_PATH);
 // Locally a missing snapshot is a legitimate skip. In CI it is a broken pipeline: the workflow
-// downloads the release before testing, and a silent skip here is how all seven of these tests
-// went unrun on every PR.
+// downloads the release before testing, and a silent skip here is how every DB-backed test in this
+// file went unrun on every PR.
 if (!hasDb && process.env.CI) throw new Error(`${DB_PATH} is missing in CI; the workflow must run npm run fetch-data before npm test`);
 
 /**
@@ -86,7 +86,9 @@ test('the default mode answers about base-game pages and still gates dlc pages',
 /**
  * One pin per marker spelling the classifier has to read, so a rule that silently stops seeing one
  * fails here by name rather than as a drift in the bounds test: {{in|se}} (Beast Claw (weapon)), the
- * plain link (Great Katana) and the italicised link (Milady, Putrescent Knight). Cocoon of the
+ * italicised plain link (Milady and Putrescent Knight, which fire sote_link) and the {{SotE}}
+ * template (Great Katana). None of the four is a single-signal pin — index_link fires on all of
+ * them too — so each pins its spelling only as long as the bounds above hold. Cocoon of the
  * Empyrean and Moangrave are DLC-only pages whose leads say "in {{ER}} and {{SotE}}" — no rule can
  * tell that from a genuine both-products claim, so they are corrected in the override file.
  * Realm of Shadow is the same story: its lead reads "the setting of the DLC expansion for {{ER}},
