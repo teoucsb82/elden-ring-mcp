@@ -17,6 +17,7 @@ jobs:
       # Exit 2 means there is no data-* release yet, which is fine on a first run. Any other failure
       # is a real error: swallowing it would silently re-crawl all 4,922 pages from scratch.
       - name: Restore previous db
+        env: { GITHUB_TOKEN: '${{ github.token }}' }
         run: |
           set +e
           npm run fetch-data
@@ -27,6 +28,7 @@ jobs:
           echo "::error::fetch-data failed (exit $status); refusing to fall back to a full re-crawl."
           exit "$status"
       - run: npm run build
+      - run: npm run extract   # re-render every page's sections with this commit's renderer, then re-extract and classify (≈3 s)
       - run: npm run attribution
       - name: Publish release
         id: release

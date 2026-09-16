@@ -299,7 +299,8 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
   // filters" is not advice that can help. Name the mismatch instead.
   if (maxReq.length && skipped.size === kinds.length) {
     const stats = maxReq.map(([stat]) => stat).join(', ');
-    return invalidFilter(`max_req names ${stats} but ${[...skipped].join(', ')} carry no requirement columns; drop max_req or ask for weapon/spell.`);
+    const names = [...skipped];
+    return invalidFilter(`max_req names ${stats} but ${names.join(', ')} ${names.length === 1 ? 'carries' : 'carry'} no requirement columns; drop max_req or ask for weapon/spell.`);
   }
   return noMatch(JSON.stringify({ kind: filter.kind, scaling_stat: filter.scaling_stat, min_scaling: filter.min_scaling, max_req: filter.max_req }),
     'No item in the snapshot matches every filter. Loosen them (raise max_req, lower min_scaling, drop kind). Items whose requirement the wiki does not state are excluded from max_req filters rather than counted as zero.');

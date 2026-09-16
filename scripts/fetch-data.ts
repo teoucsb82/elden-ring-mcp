@@ -23,7 +23,12 @@ function resolveRepo(): string {
 
 const repo = resolveRepo();
 const listUrl = `https://api.github.com/repos/${repo}/releases?per_page=30`;
-const listResponse = await fetch(listUrl, { headers: { Accept: 'application/vnd.github+json' } });
+// Unauthenticated api.github.com is 60 requests/hour per IP, shared by every runner on that IP, so CI
+// hit 403 rate limits at random. The asset download deliberately stays anonymous: it is a redirect to
+// a public object store that rejects a GitHub token as a bad credential.
+const listHeaders: Record<string, string> = { Accept: 'application/vnd.github+json' };
+if (process.env.GITHUB_TOKEN) listHeaders.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+const listResponse = await fetch(listUrl, { headers: listHeaders });
 if (!listResponse.ok) { console.error(`GitHub API ${listResponse.status} for ${listUrl}`); process.exit(1); }
 const body: unknown = await listResponse.json();
 if (!Array.isArray(body)) { console.error(`Unexpected GitHub API response for ${listUrl}: ${JSON.stringify(body).slice(0, 200)}`); process.exit(1); }
