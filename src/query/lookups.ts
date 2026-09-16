@@ -157,18 +157,15 @@ export function getPage(dbs: Dbs, title: string, section?: string, mode: DlcMode
   const r = outcome.resolved;
   const all = sectionsOf(r);
   if (!all.length) return emptyPage(title, r);
-  // A base page can still carry DLC prose in one of its sections; say so rather than let a base-mode
-  // answer read as if the snapshot had nothing on the DLC at all.
-  const hasDlcSections = (r.db.prepare('SELECT has_dlc_sections FROM pages WHERE id = ?').get(r.pageId) as { has_dlc_sections: number }).has_dlc_sections === 1;
   if (section) {
     const wanted = new RegExp(escapeRegex(section), 'i');
     const sections = all.filter((row) => wanted.test(row.heading));
     // An asked-for section that matches nothing is a section miss, never a missing page.
     return sections.length
-      ? { provenance: r.provenance, match: r.match, dlc: r.dlc, has_dlc_sections: hasDlcSections, sections }
+      ? { provenance: r.provenance, match: r.match, dlc: r.dlc, has_dlc_sections: r.hasDlcSections, sections }
       : sectionNotFound(r, section, all.map((row) => row.heading));
   }
-  return withFragment(r, () => all, { dlc: r.dlc, has_dlc_sections: hasDlcSections });
+  return withFragment(r, () => all, { dlc: r.dlc, has_dlc_sections: r.hasDlcSections });
 }
 
 /** Stored prereqs are always a JSON array, but a malformed row must not take the whole answer down. */
@@ -191,6 +188,7 @@ export function whereIs(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE
     provenance: r.provenance,
     match: r.match,
     dlc: r.dlc,
+    has_dlc_sections: r.hasDlcSections,
     acquisition: row ? { ...row, prereqs: parsePrereqs(row.prereqs), missable: row.missable === 1 } : null,
     sections: sectionsOf(r, /acquisition|location|where to find|how to get/i),
   };
@@ -202,7 +200,7 @@ export function questSteps(dbs: Dbs, npc: string, mode: DlcMode = DEFAULT_DLC_MO
   const r = outcome.resolved;
   const steps = r.db.prepare('SELECT step_ord, location, action, breaks_quest FROM quests WHERE page_id = ? ORDER BY step_ord').all(r.pageId) as QuestStep[];
   const notes = sectionsOf(r, /^notes$/i).flatMap((s) => s.markdown.split('\n')).filter((line) => BREAK_PATTERN.test(line));
-  return { provenance: r.provenance, match: r.match, dlc: r.dlc, steps, warnings: notes, ...(steps.length ? {} : { sections: sectionsOf(r, /quest/i) }) };
+  return { provenance: r.provenance, match: r.match, dlc: r.dlc, has_dlc_sections: r.hasDlcSections, steps, warnings: notes, ...(steps.length ? {} : { sections: sectionsOf(r, /quest/i) }) };
 }
 
 const KIND_TABLE = { weapon: 'weapons', spell: 'spells', talisman: 'talismans', armor: 'armor' } as const;
@@ -233,10 +231,10 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
     const rows = (Object.entries(KIND_TABLE) as [Kind, string][]).flatMap(([kind, table]) =>
       (r.db.prepare(`SELECT * FROM ${table} WHERE page_id = ?`).all(r.pageId) as Record<string, unknown>[]).map((row) => ({ kind, ...row, provenance: r.provenance })));
     if (!rows.length) return notFound(filter.name);
-    if (!filter.kind) return { rows, dlc: r.dlc };
+    if (!filter.kind) return { rows, dlc: r.dlc, has_dlc_sections: r.hasDlcSections };
     // name + kind used to ignore kind, so asking for the spell "Uchigatana" handed back the katana.
     const matching = rows.filter((row) => row.kind === filter.kind);
-    if (matching.length) return { rows: matching, dlc: r.dlc };
+    if (matching.length) return { rows: matching, dlc: r.dlc, has_dlc_sections: r.hasDlcSections };
     const kinds = [...new Set(rows.map((row) => row.kind))].join(', ');
     return { error: 'kind_mismatch' as const, detail: `"${r.provenance.title}" is in the data as ${kinds}, not as a ${filter.kind}. Drop kind, or ask for the kind it actually is.` };
   }
@@ -291,7 +289,7 @@ export function bossInfo(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MOD
   const r = outcome.resolved;
   const boss = (r.db.prepare('SELECT name, location, hp, runes, drops FROM bosses WHERE page_id = ?').get(r.pageId) as Record<string, unknown> | undefined) ?? null;
   const usual = /overview|location|strateg|weakness|resist/i;
-  return withFragment(r, () => sectionsOf(r, usual), { boss, dlc: r.dlc });
+  return withFragment(r, () => sectionsOf(r, usual), { boss, dlc: r.dlc, has_dlc_sections: r.hasDlcSections });
 }
 
 export function sourcesStatus(dbs: Dbs) {

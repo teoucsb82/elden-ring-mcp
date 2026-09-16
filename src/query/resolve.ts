@@ -18,6 +18,8 @@ export interface Resolved {
   fragment: string | null;
   /** null when the page was never classified (Fextralife cache): unknown, not base game. */
   dlc: boolean | null;
+  /** Always false for Fextralife rows: the classifier never runs on cached pages, wiki marker or not. */
+  hasDlcSections: boolean;
 }
 
 /**
@@ -40,13 +42,13 @@ export const isDlcFiltered = (r: Resolved | DlcFiltered | null): r is DlcFiltere
 const permits = (mode: DlcMode, dlc: boolean | null): boolean =>
   dlc === null || mode === 'all' || (mode === 'only' ? dlc : !dlc);
 
-const PROVENANCE_COLUMNS = 'id, source, title, url, revid, fetched_at, license, dlc';
+const PROVENANCE_COLUMNS = 'id, source, title, url, revid, fetched_at, license, dlc, has_dlc_sections';
 
-type PageRecord = Provenance & { id: number; dlc: number };
+type PageRecord = Provenance & { id: number; dlc: number; has_dlc_sections: number };
 
 const toResolved = (db: Db, row: PageRecord, match: Resolved['match'], fragment: string | null = null): Resolved => {
-  const { id, dlc, ...provenance } = row;
-  return { db, pageId: id, provenance, match, fragment, dlc: dlcOf(provenance.source, dlc) };
+  const { id, dlc, has_dlc_sections, ...provenance } = row;
+  return { db, pageId: id, provenance, match, fragment, dlc: dlcOf(provenance.source, dlc), hasDlcSections: has_dlc_sections === 1 };
 };
 
 /** Quotes each word so user text can't inject FTS5 syntax. */
