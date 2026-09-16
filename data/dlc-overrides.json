@@ -1,0 +1,19 @@
+{
+  "_comment": "Human corrections to the DLC classifier. 'dlc' forces a page to DLC; 'base' forces it to base game. 'base' is for index/hub pages that list DLC items without being DLC content. Both win over every automatic signal.",
+  "dlc": [
+    "Rellana, Twin Moon Knight"
+  ],
+  "base": [
+    "Weapons",
+    "Armor",
+    "Armor Sets",
+    "Talismans",
+    "Spells",
+    "Sorceries",
+    "Incantations",
+    "Bosses",
+    "Ashes of War",
+    "Shields",
+    "Key Items"
+  ]
+}
