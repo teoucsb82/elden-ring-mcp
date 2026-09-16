@@ -13,7 +13,7 @@ npm run smoke             # sanity check with a tiny fixture db
 Add to Claude Code (`.mcp.json`, see `.mcp.json.example`):
 
 ```json
-{ "mcpServers": { "elden-ring": { "command": "npx", "args": ["tsx", "src/server/mcp-server.ts"], "cwd": "/path/to/elden-ring-mcp" } } }
+{ "mcpServers": { "elden-ring": { "command": "npx", "args": ["tsx", "src/server/start.ts"], "cwd": "/path/to/elden-ring-mcp" } } }
 ```
 
 ## Tools

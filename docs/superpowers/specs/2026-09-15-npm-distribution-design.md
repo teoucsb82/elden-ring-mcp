@@ -92,15 +92,18 @@ if (major < 22) {
   );
   process.exit(1);
 }
-await import('./mcp-server.js');
+await import('./start.js');
 ```
 
 No static imports. The dynamic `import()` is what defers `better-sqlite3`
 past the check. This file exists for exactly this reason and should carry a
 comment saying so, because it looks like pointless indirection otherwise.
 
-`mcp-server.ts` loses its `#!/usr/bin/env node` responsibilities and is
-otherwise unchanged in structure.
+`mcp-server.ts` loses its `#!/usr/bin/env node` responsibilities. It is no
+longer otherwise unchanged in structure, though: it now only builds the
+server and exports `startStdio()`, and the separate `src/server/start.ts`
+makes the explicit call that starts stdio — which is what `cli.ts` imports
+above, rather than importing `mcp-server.js` and duplicating that call.
 
 ## 3. Two database paths, split by purpose
 
