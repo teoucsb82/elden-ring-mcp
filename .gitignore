@@ -3,3 +3,5 @@ data/*.db
 data/*.db-*
 .cache/
 *.log
+.claude/worktrees/
+.superpowers/
