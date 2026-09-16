@@ -1,5 +1,5 @@
 import type { Db } from '../db/open.js';
-import { DEFAULT_DLC_MODE, dlcOf, type Dbs, type DlcMode } from './dbs.js';
+import { DEFAULT_DLC_MODE, dlcOf, dlcPredicate, type Dbs, type DlcMode } from './dbs.js';
 
 export interface Provenance {
   source: string;
@@ -55,7 +55,15 @@ export function ftsQuery(text: string): string | null {
   return words?.length ? words.map((word) => `"${word}"`).join(' ') : null;
 }
 
-function resolveIn(db: Db, name: string): Resolved | null {
+/** Same shape both fts fallback statements share; only the WHERE clause's dlc gate differs. */
+const ftsHit = (db: Db, query: string, extra: string): PageRecord | undefined =>
+  db.prepare(`
+    SELECT ${PROVENANCE_COLUMNS.split(', ').map((c) => `p.${c}`).join(', ')}
+    FROM sections_fts f JOIN sections s ON s.id = f.rowid JOIN pages p ON p.id = s.page_id
+    WHERE sections_fts MATCH ? AND ${extra} ORDER BY bm25(sections_fts, 10.0, 2.0, 1.0) LIMIT 1
+  `).get(query) as PageRecord | undefined;
+
+function resolveIn(db: Db, name: string, mode: DlcMode): Resolved | null {
   const exact = db.prepare(`SELECT ${PROVENANCE_COLUMNS} FROM pages WHERE title = ? COLLATE NOCASE`).get(name) as PageRecord | undefined;
   if (exact) return toResolved(db, exact, 'exact');
 
@@ -70,11 +78,10 @@ function resolveIn(db: Db, name: string): Resolved | null {
 
   const query = ftsQuery(name);
   if (!query) return null;
-  const hit = db.prepare(`
-    SELECT ${PROVENANCE_COLUMNS.split(', ').map((c) => `p.${c}`).join(', ')}
-    FROM sections_fts f JOIN sections s ON s.id = f.rowid JOIN pages p ON p.id = s.page_id
-    WHERE sections_fts MATCH ? ORDER BY bm25(sections_fts, 10.0, 2.0, 1.0) LIMIT 1
-  `).get(query) as PageRecord | undefined;
+  // A guess the caller can't use is worse than none: try the mode's own pages first, and only fall
+  // back to the unfiltered top hit (still reported and then gated) when nothing permitted matches at
+  // all, so a genuine "nothing here" miss still reads as a guess rather than a silent null.
+  const hit = ftsHit(db, query, dlcPredicate(mode, 'p')) ?? ftsHit(db, query, dlcPredicate('all', 'p'));
   return hit ? toResolved(db, hit, 'search') : null;
 }
 
@@ -82,9 +89,16 @@ function resolveIn(db: Db, name: string): Resolved | null {
  * Shipped data first, then the local cache. Within a db: exact title, redirect, entity name, full-text
  * search.
  *
- * Resolves against every page regardless of mode, then compares. Excluding DLC rows from the
- * resolver's view instead would make "the snapshot does not cover this" and "you did not ask for
- * DLC" indistinguishable, which is the failure this whole feature exists to avoid.
+ * Exact title, redirect, and entity name resolve against every page regardless of mode, then compare
+ * to it. Excluding DLC rows from the resolver's view instead would make "the snapshot does not cover
+ * this" and "you did not ask for DLC" indistinguishable, which is the failure this whole feature
+ * exists to avoid.
+ *
+ * The full-text fallback is different: it is a guess, not a resolution, so it is mode-aware from the
+ * start (issue #6) — it tries the mode's own pages first and only reaches for an unfiltered top hit
+ * (still gated below) when nothing permitted matches at all. Gating an unfiltered guess ignored that
+ * dozens of permitted pages could have matched the same words just as well; a guess the caller can't
+ * use is worse than no guess.
  */
 export function resolveName(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE): Resolved | DlcFiltered | null {
   const trimmed = name.trim();
@@ -92,13 +106,13 @@ export function resolveName(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_
 
   for (const db of [dbs.shipped, dbs.local]) {
     if (!db) continue;
-    const resolved = resolveIn(db, trimmed);
+    const resolved = resolveIn(db, trimmed, mode);
     if (resolved && resolved.match !== 'search') { found = resolved; break; }
   }
   if (!found) {
     for (const db of [dbs.shipped, dbs.local]) {
       if (!db) continue;
-      const resolved = resolveIn(db, trimmed);
+      const resolved = resolveIn(db, trimmed, mode);
       if (resolved) { found = resolved; break; }
     }
   }
