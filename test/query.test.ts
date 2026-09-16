@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { buildFixtureDb } from './fixtures/build-fixture-db.js';
 import { memoryDb } from './helpers.js';
 import { replaceRedirects, upsertPage } from '../src/store/pages.js';
-import { isDlcFiltered, resolveName } from '../src/query/resolve.js';
+import { isDlcFiltered, resolveName, type Provenance } from '../src/query/resolve.js';
 import { bossInfo, getPage, itemStats, questSteps, search, sourcesStatus, whereIs } from '../src/query/lookups.js';
 import { dlcPredicate, openDbs, STALE_DETAIL } from '../src/query/dbs.js';
 import type { Dbs } from '../src/query/dbs.js';
@@ -636,4 +636,67 @@ test('search reaches cached Fextralife rows in dlc-only mode', () => {
   const result = search(dbs, 'Shadow Keep', 10, 'only') as { results?: { title: string; dlc: boolean | null }[] };
   assert.deepEqual(result.results?.map((r) => r.title), ['Messmer the Impaler']);
   assert.equal(result.results?.[0].dlc, null);
+});
+
+/**
+ * #9: the resolver walked shipped-first unconditionally, so a Fextralife page the user had just
+ * asked to fetch could never be read back whenever Fandom held the same title — the tool answered
+ * with the shipped page and the fetch looked like a no-op. Preferring the cache is only right when
+ * the caller asked for it, so it is an option; and either way both copies are listed, because the
+ * two wikis disagree on numbers and a caller who cannot see the second copy cannot say so.
+ */
+test('a cached Fextralife copy is returned when the caller asked to fetch, and listed otherwise', () => {
+  const local = memoryDb();
+  upsertPage(local, {
+    source: 'fextralife', title: 'Uchigatana', url: 'https://eldenring.wiki.fextralife.com/Uchigatana',
+    revid: null, fetchedAt: '2026-09-16T00:00:00.000Z', wikitext: null,
+    markdown: '# Uchigatana\n\nFextralife text.', license: 'Fextralife',
+  });
+  const dbs: Dbs = { shipped: fixtureDbs([{ title: 'Uchigatana', wikitext: 'katana', dlc: 0 }]).shipped, local };
+
+  const plain = getPage(dbs, 'Uchigatana') as { provenance: Provenance; alternates: Provenance[] };
+  assert.equal(plain.provenance.source, 'fandom');
+  assert.equal(plain.alternates.length, 1);
+  assert.equal(plain.alternates[0].source, 'fextralife');
+
+  const fetched = getPage(dbs, 'Uchigatana', undefined, 'base', { preferLocal: true }) as
+    { provenance: Provenance; alternates: Provenance[]; dlc?: boolean | null };
+  assert.equal(fetched.provenance.source, 'fextralife');
+  assert.equal(fetched.dlc, null, 'a cached page is unclassified even when Fandom classified its twin');
+  assert.equal(fetched.alternates[0].source, 'fandom');
+});
+
+/** Only one db holds the title: there is no second copy to offer, and an empty list says so. */
+test('alternates is empty when only one db holds the title', () => {
+  const dbs = fixtureDbs([{ title: 'Icerind Hatchet', wikitext: 'axe', dlc: 0 }]);
+  const result = getPage(dbs, 'Icerind Hatchet') as { alternates: Provenance[] };
+  assert.deepEqual(result.alternates, []);
+});
+
+/**
+ * The dlc gate is a statement about one page, but a title can exist in both dbs, and a cached
+ * Fextralife row is unclassified so no mode excludes it. Gating on the first db's copy while a
+ * permitted copy of the same title sat in the other one told the caller their own data does not
+ * cover something it does. Only an exact title swaps: the search fallback is already a guess, and
+ * a guess that hops sources is a guess about a different page again.
+ */
+test('a dlc-gated page yields to a permitted copy of the same title in the other db', () => {
+  const local = memoryDb();
+  upsertPage(local, {
+    source: 'fextralife', title: 'Verdigris Armor', url: 'https://eldenring.wiki.fextralife.com/Verdigris+Armor',
+    revid: null, fetchedAt: '2026-09-16T00:00:00.000Z', wikitext: null,
+    markdown: '# Verdigris Armor\n\nFextralife text.', license: 'Fextralife',
+  });
+  const shipped = fixtureDbs([{ title: 'Verdigris Armor', wikitext: 'armor', dlc: 1 }]).shipped;
+
+  const result = getPage({ shipped, local }, 'Verdigris Armor') as
+    { reason?: string; provenance: Provenance; alternates: Provenance[]; dlc?: boolean | null };
+  assert.equal(result.reason, undefined, 'a permitted copy exists, so this is not a miss');
+  assert.equal(result.provenance.source, 'fextralife');
+  assert.equal(result.dlc, null);
+  assert.equal(result.alternates[0].source, 'fandom', 'the gated page is still cited as the alternate');
+
+  // Nothing to yield to: the gate is the honest answer again.
+  const gated = getPage({ shipped, local: null }, 'Verdigris Armor') as { reason?: string };
+  assert.equal(gated.reason, 'dlc_filtered');
 });

@@ -28,7 +28,7 @@ if (invokedDirectly) {
 
 export const INSTRUCTIONS = `Elden Ring reference data from a versioned snapshot of eldenring.fandom.com (CC BY-SA 3.0), plus an optional per-user Fextralife page cache. Every result carries provenance (source, title, url, revid, fetched_at, license): cite it when answering.
 
-Results are base game only by default. Pass dlc: "all" to include Shadow of the Erdtree content, or dlc: "only" for DLC content alone. A result with reason: "dlc_filtered" means the page exists but this call's dlc mode excluded it — base mode (the default) excludes DLC content, only mode excludes base-game content — and the hint on the result says which way and how to re-run; never report it as missing data. Check its match field first: match: "search" means the name did not resolve and the gate describes a full-text guess at another page, not the subject asked about. A result with has_dlc_sections: true is a base-game page whose wiki text carries the Shadow of the Erdtree marker template (it links or notes DLC content); pages that discuss the DLC in prose without the marker are not flagged. Every successful lookup of a Fandom page carries dlc and has_dlc_sections (true or false). A successful result with NO dlc field is a cached Fextralife page, which the classifier never labels: its DLC status is unknown, so never state it is base game or DLC, and no dlc mode filters it out. Error and not-found shapes carry neither field.
+Results are base game only by default. Pass dlc: "all" to include Shadow of the Erdtree content, or dlc: "only" for DLC content alone. A result with reason: "dlc_filtered" means the page exists but this call's dlc mode excluded it — base mode (the default) excludes DLC content, only mode excludes base-game content — and the hint on the result says which way and how to re-run; never report it as missing data. Check its match field first: match: "search" means the name did not resolve and the gate describes a full-text guess at another page, not the subject asked about. A result with has_dlc_sections: true is a base-game page whose wiki text carries the Shadow of the Erdtree marker template (it links or notes DLC content); pages that discuss the DLC in prose without the marker are not flagged. Every successful lookup of a Fandom page carries dlc and has_dlc_sections (true or false). A successful result with NO dlc field is a cached Fextralife page, which the classifier never labels: its DLC status is unknown, so never state it is base game or DLC, and no dlc mode filters it out. A result with alternates lists the same title in the other source (Fandom or the Fextralife cache); pass fetch: true to answer from the cached Fextralife copy, and when the two disagree on a number show both with their sources. Error and not-found shapes carry neither field.
 
 A result with error: "data_stale" means the shipped snapshot predates this server's schema; tell the user to run npm run extract (or fetch a newer data release). It is not missing data.
 
@@ -55,7 +55,13 @@ const fetchArg = z.boolean().optional().describe('If true, first fetch this page
 const dlcArg = z.enum(['base', 'all', 'only']).optional().default('base')
   .describe('Which content to search: "base" (default) is base game only, "all" includes Shadow of the Erdtree, "only" is DLC content alone');
 
-/** Runs a lookup; with fetch: true, caches the Fextralife page for `title` first. */
+/**
+ * Runs a lookup; with fetch: true, caches the Fextralife page for `title` first.
+ *
+ * Each call site pairs this with `{ preferLocal: fetch === true }` on its lookup, because caching a
+ * page the shipped snapshot also holds used to change nothing a caller could see: the resolver went
+ * shipped-first and handed back the Fandom copy anyway (issue #9).
+ */
 async function withFetch<T>(title: string, fetch: boolean | undefined, lookup: () => T) {
   if (dbs.stale) return staleReply();
   try {
@@ -87,21 +93,21 @@ server.registerTool('get_page', {
     dlc: dlcArg,
   },
   annotations: MAY_FETCH,
-}, async ({ title, section, fetch, dlc }) => withFetch(title, fetch, () => getPage(dbs, title, section, dlc)));
+}, async ({ title, section, fetch, dlc }) => withFetch(title, fetch, () => getPage(dbs, title, section, dlc, { preferLocal: fetch === true })));
 
 server.registerTool('where_is', {
   title: 'Where is an item',
   description: 'How to get an item, spell, talisman or armor piece: method (drop/merchant/chest/quest/ground), nearest site of grace if the wiki names one, prerequisite sentences, missable flag, and the acquisition/location sections verbatim.',
   inputSchema: { name: z.string().min(1).describe('Item name, e.g. "Azur\'s Glintstone Staff"'), fetch: fetchArg, dlc: dlcArg },
   annotations: MAY_FETCH,
-}, async ({ name, fetch, dlc }) => withFetch(name, fetch, () => whereIs(dbs, name, dlc)));
+}, async ({ name, fetch, dlc }) => withFetch(name, fetch, () => whereIs(dbs, name, dlc, { preferLocal: fetch === true })));
 
 server.registerTool('quest_steps', {
   title: 'NPC quest steps',
   description: 'Ordered questline steps for an NPC (location + actions), per-step quest-breaking warnings, and warnings from the page notes. Falls back to quest sections when steps could not be parsed.',
   inputSchema: { npc: z.string().min(1).describe('NPC name, e.g. "Sorceress Sellen"'), fetch: fetchArg, dlc: dlcArg },
   annotations: MAY_FETCH,
-}, async ({ npc, fetch, dlc }) => withFetch(npc, fetch, () => questSteps(dbs, npc, dlc)));
+}, async ({ npc, fetch, dlc }) => withFetch(npc, fetch, () => questSteps(dbs, npc, dlc, { preferLocal: fetch === true })));
 
 server.registerTool('item_stats', {
   title: 'Item stats',
@@ -123,7 +129,7 @@ server.registerTool('boss', {
   description: 'Boss location, HP, runes and drops from the wiki infobox, plus overview/strategy/weakness sections. Names that redirect to a section of a shared page (e.g. "Magma Wyrm Makar") return that section.',
   inputSchema: { name: z.string().min(1), fetch: fetchArg, dlc: dlcArg },
   annotations: MAY_FETCH,
-}, async ({ name, fetch, dlc }) => withFetch(name, fetch, () => bossInfo(dbs, name, dlc)));
+}, async ({ name, fetch, dlc }) => withFetch(name, fetch, () => bossInfo(dbs, name, dlc, { preferLocal: fetch === true })));
 
 server.registerTool('sources_status', {
   title: 'Data sources status',

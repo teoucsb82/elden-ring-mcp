@@ -20,6 +20,12 @@ export interface Resolved {
   dlc: boolean | null;
   /** Always false for Fextralife rows: the classifier never runs on cached pages, wiki marker or not. */
   hasDlcSections: boolean;
+  /**
+   * The same title, exactly, in the db(s) this answer did not come from — empty when only one holds
+   * it. Fandom and Fextralife disagree on numbers often enough that the server's own instructions
+   * tell a model to show both; it can only do that if it is told the second copy exists.
+   */
+  alternates: Provenance[];
 }
 
 /**
@@ -46,9 +52,10 @@ const PROVENANCE_COLUMNS = 'id, source, title, url, revid, fetched_at, license, 
 
 type PageRecord = Provenance & { id: number; dlc: number; has_dlc_sections: number };
 
-const toResolved = (db: Db, row: PageRecord, match: Resolved['match'], fragment: string | null = null): Resolved => {
+/** `alternates` is filled in by resolveName, which is the only layer that can see more than one db. */
+const toResolved = (db: Db, row: PageRecord, match: Resolved['match'], fragment: string | null = null, alternates: Provenance[] = []): Resolved => {
   const { id, dlc, has_dlc_sections, ...provenance } = row;
-  return { db, pageId: id, provenance, match, fragment, dlc: dlcOf(provenance.source, dlc), hasDlcSections: has_dlc_sections === 1 };
+  return { db, pageId: id, provenance, match, fragment, dlc: dlcOf(provenance.source, dlc), hasDlcSections: has_dlc_sections === 1, alternates };
 };
 
 /** Quotes each word so user text can't inject FTS5 syntax. */
@@ -87,9 +94,56 @@ function resolveIn(db: Db, name: string, mode: DlcMode): Resolved | null {
   return hit ? toResolved(db, hit, 'search') : null;
 }
 
+export interface ResolveOptions {
+  /**
+   * Walk the local cache before the shipped snapshot. Set only when the caller passed fetch: true —
+   * having just paid for a Fextralife round trip, they asked for that copy specifically (issue #9).
+   * It is not the default: the shipped Fandom snapshot is the classified, licensed, citable source,
+   * and a cache entry from an older visit must not quietly displace it on every other call.
+   */
+  preferLocal?: boolean;
+}
+
 /**
- * Shipped data first, then the local cache. Within a db: exact title, redirect, entity name, full-text
- * search.
+ * The mode excluded the copy that resolved first; this looks for a copy of the same title, exactly,
+ * in another db that the mode permits — a cached Fextralife row always is, being unclassified.
+ *
+ * Without it the gate lied by omission: it reported "this page is DLC content you did not ask for"
+ * while a permitted copy of that very title sat in the other db, so a caller who had already cached
+ * the Fextralife page was told their own data does not cover something it does.
+ *
+ * Exact titles only, and never for a `search` match. The FTS fallback is a guess at what was meant;
+ * letting a guess hop sources on the strength of its guessed title makes it a guess about a
+ * different page again, which is the failure the gate's own `match` field exists to expose.
+ */
+function permittedElsewhere(order: (Db | null)[], found: Resolved, mode: DlcMode): Resolved | null {
+  if (found.match === 'search') return null;
+  for (const db of order) {
+    if (!db || db === found.db) continue;
+    const row = db.prepare(`SELECT ${PROVENANCE_COLUMNS} FROM pages WHERE title = ? COLLATE NOCASE`)
+      .get(found.provenance.title) as PageRecord | undefined;
+    if (!row) continue;
+    const candidate = toResolved(db, row, 'exact');
+    if (permits(mode, candidate.dlc)) return candidate;
+  }
+  return null;
+}
+
+/** The same title, exactly, in every db but the one the answer came from. */
+function alternatesFor(order: (Db | null)[], found: Resolved): Provenance[] {
+  const rows: Provenance[] = [];
+  for (const db of order) {
+    if (!db || db === found.db) continue;
+    const row = db.prepare('SELECT source, title, url, revid, fetched_at, license FROM pages WHERE title = ? COLLATE NOCASE')
+      .get(found.provenance.title) as Provenance | undefined;
+    if (row) rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Shipped data first, then the local cache — or the other way round when the caller asked to fetch.
+ * Within a db: exact title, redirect, entity name, full-text search.
  *
  * Exact title, redirect, and entity name resolve against every page regardless of mode, then compare
  * to it. Excluding DLC rows from the resolver's view instead would make "the snapshot does not cover
@@ -102,17 +156,18 @@ function resolveIn(db: Db, name: string, mode: DlcMode): Resolved | null {
  * dozens of permitted pages could have matched the same words just as well; a guess the caller can't
  * use is worse than no guess.
  */
-export function resolveName(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE): Resolved | DlcFiltered | null {
+export function resolveName(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE, opts: ResolveOptions = {}): Resolved | DlcFiltered | null {
   const trimmed = name.trim();
+  const order = opts.preferLocal ? [dbs.local, dbs.shipped] : [dbs.shipped, dbs.local];
   let found: Resolved | null = null;
 
-  for (const db of [dbs.shipped, dbs.local]) {
+  for (const db of order) {
     if (!db) continue;
     const resolved = resolveIn(db, trimmed, mode);
     if (resolved && resolved.match !== 'search') { found = resolved; break; }
   }
   if (!found) {
-    for (const db of [dbs.shipped, dbs.local]) {
+    for (const db of order) {
       if (!db) continue;
       const resolved = resolveIn(db, trimmed, mode);
       if (resolved) { found = resolved; break; }
@@ -120,6 +175,10 @@ export function resolveName(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_
   }
 
   if (!found) return null;
-  if (permits(mode, found.dlc)) return found;
+  if (permits(mode, found.dlc)) return { ...found, alternates: alternatesFor(order, found) };
+  // The gate is a last resort: it is only honest once no db holds a copy of this title the caller's
+  // mode actually allows. The excluded page rides along in the survivor's alternates either way.
+  const permitted = permittedElsewhere(order, found, mode);
+  if (permitted) return { ...permitted, alternates: alternatesFor(order, permitted) };
   return { filtered: 'dlc', title: found.provenance.title, provenance: found.provenance, match: found.match };
 }
