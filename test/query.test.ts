@@ -40,6 +40,20 @@ test('getPage whole and single section; not_found on miss', () => {
   assert.deepEqual(getPage(dbs(), 'zzqx nonsense'), { not_found: true, query: 'zzqx nonsense', hint: 'No page matched in the shipped data or local cache. Try search, or pass fetch: true to cache the Fextralife page.' });
 });
 
+// The default call: no section argument and no redirect fragment. This is the common path and it is
+// what a shared fragment helper is most likely to break, so pin it explicitly.
+test('getPage with no section and no fragment returns the whole page', () => {
+  const page = getPage(dbs(), "Azur's Glintstone Staff") as any;
+  assert.equal(page.not_found, undefined);
+  assert.equal(page.match, 'exact');
+  assert.ok(page.sections.length > 0, 'expected the whole page, got no sections');
+  assert.equal(page.sections[0].heading, 'Summary', 'the lead section should come first');
+  assert.deepEqual(page.sections.map((s: any) => s.heading), ['Summary', 'Acquisition']);
+  // No fragment was involved, so the fragment fields have nothing to report.
+  assert.equal(page.fragment, undefined);
+  assert.equal(page.fragment_matched, undefined);
+});
+
 test('whereIs returns parsed acquisition', () => {
   const result = whereIs(dbs(), "Azur's Glintstone Staff") as any;
   assert.equal(result.acquisition.nearest_grace, 'Debate Parlor');
@@ -100,6 +114,14 @@ test('getPage falls back to the whole page when the redirect fragment names no s
   assert.ok(result.sections.length > 0, 'expected the page sections, got none');
   assert.equal(result.fragment, 'Bosses');
   assert.equal(result.fragment_matched, false);
+});
+
+test('getPage returns only the fragment section when the redirect fragment does match', () => {
+  const page = getPage(dbs(), 'Magma Wyrm Makar') as any;
+  assert.equal(page.match, 'redirect');
+  assert.equal(page.fragment, 'Overview');
+  assert.equal(page.fragment_matched, true);
+  assert.deepEqual(page.sections.map((s: any) => s.heading), ['Overview']);
 });
 
 test('getPage still reports not_found for an explicitly requested section that does not exist', () => {

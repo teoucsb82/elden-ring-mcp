@@ -43,14 +43,13 @@ export function search(dbs: Dbs, query: string, limit = 10) {
  * fragment, but fall back to the page rather than return an OK-looking answer with no sections, and
  * say which happened so a caller can tell fragment prose from page prose.
  */
-function withFragment<T extends object>(r: Resolved, fragmentSections: SectionOut[], fallback: () => SectionOut[], rest: T) {
-  if (!r.fragment) return { provenance: r.provenance, match: r.match, ...rest, sections: fragmentSections };
+function withFragment<T extends object>(r: Resolved, fallback: () => SectionOut[], rest: T) {
+  const base = { provenance: r.provenance, match: r.match, ...rest };
+  // No fragment at all is the ordinary case, and it must answer with the caller's usual sections.
+  if (!r.fragment) return { ...base, sections: fallback() };
+  const fragmentSections = sectionsOf(r, new RegExp(`^${escapeRegex(r.fragment)}$`, 'i'));
   const matched = fragmentSections.length > 0;
-  return {
-    provenance: r.provenance, match: r.match, ...rest,
-    fragment: r.fragment, fragment_matched: matched,
-    sections: matched ? fragmentSections : fallback(),
-  };
+  return { ...base, fragment: r.fragment, fragment_matched: matched, sections: matched ? fragmentSections : fallback() };
 }
 
 export function getPage(dbs: Dbs, title: string, section?: string) {
@@ -61,8 +60,7 @@ export function getPage(dbs: Dbs, title: string, section?: string) {
     // An asked-for section that matches nothing is a miss, not an empty page.
     return sections.length ? { provenance: r.provenance, match: r.match, sections } : notFound(title);
   }
-  const fragmentSections = r.fragment ? sectionsOf(r, new RegExp(`^${escapeRegex(r.fragment)}$`, 'i')) : [];
-  return withFragment(r, fragmentSections, () => sectionsOf(r), {});
+  return withFragment(r, () => sectionsOf(r), {});
 }
 
 /** Stored prereqs are always a JSON array, but a malformed row must not take the whole answer down. */
@@ -153,8 +151,7 @@ export function bossInfo(dbs: Dbs, name: string) {
   if (!r) return notFound(name);
   const boss = (r.db.prepare('SELECT name, location, hp, runes, drops FROM bosses WHERE page_id = ?').get(r.pageId) as Record<string, unknown> | undefined) ?? null;
   const usual = /overview|location|strateg|weakness|resist/i;
-  const fragmentSections = r.fragment ? sectionsOf(r, new RegExp(`^${escapeRegex(r.fragment)}$`, 'i')) : sectionsOf(r, usual);
-  return withFragment(r, fragmentSections, () => sectionsOf(r, usual), { boss });
+  return withFragment(r, () => sectionsOf(r, usual), { boss });
 }
 
 export function sourcesStatus(dbs: Dbs) {

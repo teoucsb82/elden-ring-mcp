@@ -82,6 +82,14 @@ test('a line starting with |-| but carrying no label is not turned into a headin
   assert.match(markdown, /^\|-\| stray marker with no equals$/m);
 });
 
+// The tab boundary is carried by a printable sentinel, so page text that happens to contain it must
+// not be able to fake a boundary.
+test('page text containing the tabber sentinel does not create a section break', () => {
+  const sections = splitSections(wikitextToMarkdown('==Notes==\nSee @@TABBER_END_8f2b6d41a7c94e03@@ for details.'));
+  assert.deepEqual(sections.map((s) => s.heading), ['Notes']);
+  assert.equal(sections[0].markdown, 'See  for details.');
+});
+
 // </tabber> ends the tabbed region. Prose after it belongs to the enclosing section, not to the
 // last tab, or boss/search will quote unrelated text as that tab's content.
 test('prose after </tabber> is not attributed to the last tab', () => {
