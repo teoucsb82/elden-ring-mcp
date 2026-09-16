@@ -4799,7 +4799,7 @@ Text in `elden-ring.db` is adapted from the Elden Ring Wiki at Fandom (https://e
 - [Vyke's War Spear](https://eldenring.fandom.com/wiki/Vyke's_War_Spear) (revision 84134)
 - [Wailing Dunes](https://eldenring.fandom.com/wiki/Wailing_Dunes) (revision 65318)
 - [Wait!](https://eldenring.fandom.com/wiki/Wait!) (revision 58643)
-- [Wakizashi](https://eldenring.fandom.com/wiki/Wakizashi) (revision 84207)
+- [Wakizashi](https://eldenring.fandom.com/wiki/Wakizashi) (revision 86029)
 - [Wandering Mausoleum](https://eldenring.fandom.com/wiki/Wandering_Mausoleum) (revision 82043)
 - [Wandering Merchant](https://eldenring.fandom.com/wiki/Wandering_Merchant) (revision 76554)
 - [Wandering Merchant/dialogue](https://eldenring.fandom.com/wiki/Wandering_Merchant%2Fdialogue) (revision 73982)
