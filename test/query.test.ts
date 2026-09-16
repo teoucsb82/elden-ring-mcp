@@ -20,7 +20,11 @@ const resolveBase = (d: Dbs, name: string) => {
   return isDlcFiltered(r) ? null : r;
 };
 
-type Fixture = { title: string; wikitext: string; dlc: number; hasDlcSections?: number };
+type Fixture = {
+  title: string; wikitext: string; dlc: number; hasDlcSections?: number;
+  /** An extracted weapon row for this page. itemStats' filterless branch reads the item tables, not pages. */
+  weapon?: { name: string; strReq?: number };
+};
 
 /** A dlc-aware fixture db: one page per entry, with its single section indexed for search. */
 function fixtureDbs(fixtures: Fixture[]): Dbs {
@@ -29,12 +33,14 @@ function fixtureDbs(fixtures: Fixture[]): Dbs {
     'INSERT INTO pages (source, title, url, revid, fetched_at, license, wikitext, dlc, has_dlc_sections) VALUES (?,?,?,?,?,?,?,?,?)');
   const insertSection = db.prepare('INSERT INTO sections (page_id, ord, heading, markdown) VALUES (?,?,?,?)');
   const insertFts = db.prepare('INSERT INTO sections_fts (rowid, title, heading, markdown) VALUES (?,?,?,?)');
+  const insertWeapon = db.prepare('INSERT INTO weapons (page_id, name, str_req) VALUES (?,?,?)');
   for (const f of fixtures) {
     const { lastInsertRowid } = insertPage.run(
       'fandom', f.title, `https://x/${f.title}`, 1, '2026-09-15', 'CC BY-SA 3.0', f.wikitext, f.dlc, f.hasDlcSections ?? 0);
     const pageId = Number(lastInsertRowid);
     const section = insertSection.run(pageId, 0, 'Acquisition', f.wikitext);
     insertFts.run(Number(section.lastInsertRowid), f.title, 'Acquisition', f.wikitext);
+    if (f.weapon) insertWeapon.run(pageId, f.weapon.name, f.weapon.strReq ?? null);
   }
   return { shipped: db, local: null };
 }
@@ -378,13 +384,94 @@ test('getPage carries has_dlc_sections on a base page that mentions dlc', () => 
   assert.equal(result.has_dlc_sections, true);
 });
 
+// Asymmetric on purpose: with one page of each, base_pages and dlc_pages are both 1 and a count that
+// reads the wrong column still passes.
 test('sourcesStatus reports base and dlc counts', () => {
   const dbs = fixtureDbs([
     { title: 'Verdigris Armor', wikitext: 'a', dlc: 1 },
     { title: 'Icerind Hatchet', wikitext: 'b', dlc: 0 },
+    { title: 'Uchigatana', wikitext: 'c', dlc: 0 },
   ]);
   const status = sourcesStatus(dbs) as { shipped: { pages: number; dlc_pages: number; base_pages: number } };
-  assert.equal(status.shipped.pages, 2);
+  assert.equal(status.shipped.pages, 3);
   assert.equal(status.shipped.dlc_pages, 1);
-  assert.equal(status.shipped.base_pages, 1);
+  assert.equal(status.shipped.base_pages, 2);
+});
+
+// The filterless branch of itemStats is the one query the dlc predicate reaches through a JOIN, and
+// nothing else in the suite inserts item rows, so without these the predicate could be deleted
+// outright and the suite would stay green.
+test('itemStats excludes dlc items from a filterless query in base mode', () => {
+  const dbs = fixtureDbs([
+    { title: 'Verdigris Greatsword', wikitext: 'dlc sword', dlc: 1, weapon: { name: 'Verdigris Greatsword', strReq: 20 } },
+    { title: 'Icerind Hatchet', wikitext: 'base axe', dlc: 0, weapon: { name: 'Icerind Hatchet', strReq: 10 } },
+  ]);
+  const base = itemStats(dbs, { kind: 'weapon' }, 'base') as any;
+  assert.deepEqual(base.rows.map((r: any) => r.name), ['Icerind Hatchet']);
+  assert.equal(base.rows[0].dlc, false);
+
+  const only = itemStats(dbs, { kind: 'weapon' }, 'only') as any;
+  assert.deepEqual(only.rows.map((r: any) => r.name), ['Verdigris Greatsword']);
+  assert.equal(only.rows[0].dlc, true);
+
+  const all = itemStats(dbs, { kind: 'weapon' }, 'all') as any;
+  assert.deepEqual(all.rows.map((r: any) => r.name), ['Icerind Hatchet', 'Verdigris Greatsword']);
+});
+
+// The dlc predicate is composed alongside the caller's own where clauses, so exercise both at once:
+// a str_req filter both items satisfy must still hide the dlc one.
+test('itemStats applies the dlc filter alongside a max_req filter', () => {
+  const dbs = fixtureDbs([
+    { title: 'Verdigris Greatsword', wikitext: 'dlc sword', dlc: 1, weapon: { name: 'Verdigris Greatsword', strReq: 12 } },
+    { title: 'Icerind Hatchet', wikitext: 'base axe', dlc: 0, weapon: { name: 'Icerind Hatchet', strReq: 10 } },
+  ]);
+  const base = itemStats(dbs, { kind: 'weapon', max_req: { str: 20 } }, 'base') as any;
+  assert.deepEqual(base.rows.map((r: any) => r.name), ['Icerind Hatchet']);
+  const all = itemStats(dbs, { kind: 'weapon', max_req: { str: 20 } }, 'all') as any;
+  assert.deepEqual(all.rows.map((r: any) => r.name), ['Icerind Hatchet', 'Verdigris Greatsword']);
+});
+
+// mcp-server's instructions tell a model that not_found means the data does not cover it. A search
+// whose only hits were filtered out by the caller's own mode must not make that claim.
+test('search reports dlc_filtered rather than claiming the snapshot has nothing', () => {
+  const dbs = fixtureDbs([
+    { title: 'Verdigris Armor', wikitext: 'verdigris plate', dlc: 1 },
+    { title: 'Icerind Hatchet', wikitext: 'frost axe', dlc: 0 },
+  ]);
+  const result = search(dbs, 'verdigris', 10, 'base') as { not_found: true; reason: string; hidden_matches: number; hint: string };
+  assert.equal(result.not_found, true);
+  assert.equal(result.reason, 'dlc_filtered');
+  assert.equal(result.hidden_matches, 1);
+  assert.match(result.hint, /Shadow of the Erdtree/);
+  assert.match(result.hint, /dlc: "all"/);
+});
+
+test('search in only mode says the hits it hid were base game', () => {
+  const dbs = fixtureDbs([{ title: 'Icerind Hatchet', wikitext: 'frost axe', dlc: 0 }]);
+  const result = search(dbs, 'frost', 10, 'only') as { not_found: true; reason: string; hidden_matches: number; hint: string };
+  assert.equal(result.reason, 'dlc_filtered');
+  assert.equal(result.hidden_matches, 1);
+  assert.match(result.hint, /base-game/);
+  assert.match(result.hint, /dlc: "all"/);
+});
+
+test('a search that matches nothing in either mode stays a plain miss', () => {
+  const dbs = fixtureDbs([
+    { title: 'Verdigris Armor', wikitext: 'verdigris plate', dlc: 1 },
+    { title: 'Icerind Hatchet', wikitext: 'frost axe', dlc: 0 },
+  ]);
+  const result = search(dbs, 'zzqx nonsense', 10, 'base') as { not_found: true; reason?: string; hint: string };
+  assert.equal(result.not_found, true);
+  assert.equal(result.reason, undefined);
+  assert.match(result.hint, /Nothing in the shipped data/);
+});
+
+test('a base-mode search that does find base rows is unaffected', () => {
+  const dbs = fixtureDbs([
+    { title: 'Verdigris Armor', wikitext: 'verdigris plate', dlc: 1 },
+    { title: 'Icerind Hatchet', wikitext: 'frost plate', dlc: 0 },
+  ]);
+  const result = search(dbs, 'plate', 10, 'base') as { results: { title: string }[]; reason?: string };
+  assert.equal(result.reason, undefined);
+  assert.deepEqual(result.results.map((r) => r.title), ['Icerind Hatchet']);
 });

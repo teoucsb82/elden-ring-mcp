@@ -52,6 +52,36 @@ const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 
 const NO_SEARCH_HINT = 'Nothing in the shipped data or the local cache matches these words. Try fewer or different words, or pass fetch: true on get_page to cache the Fextralife page.';
 
+/** The mode whose rows the caller's own mode just excluded. `all` excludes nothing, so it has none. */
+const OPPOSITE_MODE: Partial<Record<DlcMode, DlcMode>> = { base: 'only', only: 'base' };
+
+/**
+ * search cannot resolve a name, so it cannot use dlcFiltered. It reaches the same answer the other
+ * way round: on a zero-row miss, count what the opposite filter would have matched. The server's
+ * instructions tell a model that not_found means the data does not cover it, so an unqualified miss
+ * on a query the snapshot does hold makes the model assert something untrue.
+ */
+const searchDlcFiltered = (query: string, mode: DlcMode, hidden: number) => ({
+  not_found: true as const, query, reason: 'dlc_filtered' as const, hidden_matches: hidden,
+  hint: mode === 'only'
+    ? `${hidden} section${hidden === 1 ? '' : 's'} in the snapshot match these words, but all of them are base-game content and this call asked for DLC only. Re-run with dlc: "all" to include the base game, or dlc: "base" for the base game alone.`
+    : `${hidden} section${hidden === 1 ? '' : 's'} in the snapshot match these words, but all of them are Shadow of the Erdtree content and this call asked for base-game results. Re-run with dlc: "all" to include the DLC, or dlc: "only" for DLC alone.`,
+});
+
+/** Miss path only: one count, never run when the search already has rows to return. */
+function countMatches(dbs: Dbs, fts: string, mode: DlcMode): number {
+  let total = 0;
+  for (const db of [dbs.shipped, dbs.local]) {
+    if (!db) continue;
+    total += (db.prepare(`
+      SELECT count(*) AS n
+      FROM sections_fts f JOIN sections s ON s.id = f.rowid JOIN pages p ON p.id = s.page_id
+      WHERE sections_fts MATCH ? AND ${dlcPredicate(mode, 'p')}
+    `).get(fts) as { n: number }).n;
+  }
+  return total;
+}
+
 export function search(dbs: Dbs, query: string, limit = 10, mode: DlcMode = DEFAULT_DLC_MODE) {
   const fts = ftsQuery(query);
   const results: { title: string; heading: string; snippet: string; dlc: boolean; provenance: Provenance }[] = [];
@@ -70,7 +100,12 @@ export function search(dbs: Dbs, query: string, limit = 10, mode: DlcMode = DEFA
       results.push({ title: provenance.title, heading, snippet, dlc: dlc === 1, provenance });
     }
   }
-  return results.length ? { results: results.slice(0, limit) } : noMatch(query, NO_SEARCH_HINT);
+  if (results.length) return { results: results.slice(0, limit) };
+  // A genuine miss must stay a genuine miss: only say dlc_filtered when the opposite filter really
+  // does hold rows for these words.
+  const opposite = OPPOSITE_MODE[mode];
+  const hidden = opposite ? countMatches(dbs, fts, opposite) : 0;
+  return hidden ? searchDlcFiltered(query, mode, hidden) : noMatch(query, NO_SEARCH_HINT);
 }
 
 /**
