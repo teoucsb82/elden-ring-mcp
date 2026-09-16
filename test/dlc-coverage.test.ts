@@ -6,6 +6,10 @@ import { whereIs } from '../src/query/lookups.js';
 
 const DB_PATH = 'data/elden-ring.db';
 const hasDb = existsSync(DB_PATH);
+// Locally a missing snapshot is a legitimate skip. In CI it is a broken pipeline: the workflow
+// downloads the release before testing, and a silent skip here is how all seven of these tests
+// went unrun on every PR.
+if (!hasDb && process.env.CI) throw new Error(`${DB_PATH} is missing in CI; the workflow must run npm run fetch-data before npm test`);
 
 /**
  * A bound in both directions. The old floor-only assertion could catch under-labelling alone, while

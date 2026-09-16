@@ -6,11 +6,15 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
       - run: npm ci
+      - run: npm run fetch-data        # release asset; exit 2 (no release) is fatal here on purpose
+      - run: npm run sync-categories   # bounded MediaWiki crawl; fills dlc_categories
+      - run: npm run extract           # migrate + re-render + re-extract + classify with THIS commit's code
       - run: npm run typecheck
       - run: npm test
       - run: npm run smoke
