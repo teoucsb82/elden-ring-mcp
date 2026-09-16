@@ -26,6 +26,53 @@ Found in a secluded room on the highest level of the [[Church of the Cuckoo]]. T
 From the [[Debate Parlor]] site of grace, go outside to the left until you meet two sorcerers.
 `;
 
+// A second weapon: different scaling letters and requirements from the staff, so a filter that
+// silently matched everything (or nothing) can be told apart from one that really filters.
+export const UCHIGATANA = `{{Infobox Weapon
+| title         = Uchigatana
+| type          = Katana
+| weight        = 5.0
+| str_scale     = D
+| dex_scale     = D
+| int_scale     = -
+| str_req       = 11
+| dex_req       = 15
+}}
+'''Uchigatana''' is a [[Katana]] in {{ER}}.
+
+==Acquisition==
+Starting armament of the [[Samurai]] class.
+`;
+
+// A third weapon whose infobox lists no requirements at all, the shape that gave Celebrant's Skull
+// and Unarmed NULL str_req in the real build. "At most 0 STR" must not claim these are usable.
+export const NO_REQ_WEAPON = `{{Infobox Weapon
+| title         = Celebrant's Skull
+| type          = Hammer
+| weight        = 3.0
+| str_scale     = E
+| dex_scale     = E
+}}
+'''Celebrant's Skull''' is a [[Hammer]] in {{ER}}.
+
+==Acquisition==
+Dropped by celebrants in the [[Altus Plateau]].
+`;
+
+// Fourteen real pages look like this: an infobox and a table, nothing else, so section splitting
+// leaves the page with no readable prose at all.
+export const NO_SECTIONS = `{{Infobox Enemy
+| title = Flamespitter
+| location = [[Stormveil Castle]]
+}}
+{| class="article-table"
+! Stat !! Value
+|-
+| HP || 100
+|}
+[[Category:Enemies]]
+`;
+
 export const COMET_AZUR = `{{stub|missing data}}
 {{Infobox_Item
 | title       = Comet Azur

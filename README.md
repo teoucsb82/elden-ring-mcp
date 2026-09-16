@@ -28,7 +28,9 @@ Add to Claude Code (`.mcp.json`, see `.mcp.json.example`):
 | `boss` | location, HP, runes, drops, strategy sections |
 | `sources_status` | data freshness and counts |
 
-`get_page`, `where_is`, `quest_steps` and `boss` accept `fetch: true` to cache the matching Fextralife page on your machine (`~/.cache/elden-ring-mcp/`). That cache is never committed or shared.
+`get_page`, `where_is`, `quest_steps` and `boss` accept `fetch: true` to cache the matching Fextralife page on your machine (`~/.cache/elden-ring-mcp/`). That cache is never committed or shared. Fextralife is fetched one page per request, at most one request per second and at most 20 pages per server process, so it can never be bulk-crawled.
+
+Nothing matched is always explicit: `not_found` (no page, no search hit, no item matching the filters) or `section_not_found` (the page exists, the section does not - the result lists the page's real headings). `item_stats` excludes items whose requirement the wiki does not state rather than reporting them as free.
 
 ## Building data yourself
 

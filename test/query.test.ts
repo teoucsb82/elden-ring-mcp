@@ -26,7 +26,7 @@ test('resolveName falls back to the local cache db', () => {
 });
 
 test('search returns snippets with provenance', () => {
-  const { results } = search(dbs(), 'damage sorceries');
+  const { results } = search(dbs(), 'damage sorceries') as { results: any[] };
   assert.equal(results[0].title, 'Graven-School Talisman');
   assert.equal(results[0].provenance.license, 'CC BY-SA 3.0 (eldenring.fandom.com)');
   assert.ok(results[0].snippet.length > 0);
@@ -72,9 +72,43 @@ test('itemStats by name and by filter', () => {
   const byName = itemStats(dbs(), { name: "Azur's Glintstone Staff" }) as any;
   assert.equal(byName.rows[0].int_req, 52);
   assert.equal(byName.rows[0].kind, 'weapon');
+  // Three weapons are in the fixture; a filter that returns all of them is a no-op, so name them.
   const filtered = itemStats(dbs(), { kind: 'weapon', scaling_stat: 'int', min_scaling: 'C', max_req: { int: 60 } }) as any;
-  assert.equal(filtered.rows.length, 1);
-  assert.equal((itemStats(dbs(), { kind: 'weapon', scaling_stat: 'int', min_scaling: 'A' }) as any).rows.length, 0);
+  assert.deepEqual(filtered.rows.map((r: any) => r.name), ["Azur's Glintstone Staff"]);
+  assert.equal((itemStats(dbs(), { kind: 'weapon', scaling_stat: 'int', min_scaling: 'A' }) as any).not_found, true);
+});
+
+// Celebrant's Skull and Unarmed have no parsed requirements in the real build. coalesce(str_req, 0)
+// made them answer "usable at 0 STR", which is a confidently wrong build-planning answer.
+test('max_req excludes items whose requirement is unknown instead of treating it as zero', () => {
+  const atZero = itemStats(dbs(), { kind: 'weapon', max_req: { str: 0 } }) as any;
+  assert.equal(atZero.not_found, true, 'no fixture weapon has a known 0 STR requirement');
+  const atEleven = itemStats(dbs(), { kind: 'weapon', max_req: { str: 11 } }) as any;
+  assert.deepEqual(atEleven.rows.map((r: any) => r.name), ["Azur's Glintstone Staff", 'Uchigatana']);
+  const atTen = itemStats(dbs(), { kind: 'weapon', max_req: { str: 10 } }) as any;
+  assert.deepEqual(atTen.rows.map((r: any) => r.name), ["Azur's Glintstone Staff"]);
+});
+
+test('itemStats rejects a name whose item is not the requested kind', () => {
+  const mismatch = itemStats(dbs(), { name: 'Comet Azur', kind: 'weapon' }) as any;
+  assert.equal(mismatch.error, 'kind_mismatch');
+  assert.match(mismatch.detail, /Comet Azur/);
+  assert.match(mismatch.detail, /spell/);
+  const agreeing = itemStats(dbs(), { name: 'Comet Azur', kind: 'spell' }) as any;
+  assert.deepEqual(agreeing.rows.map((r: any) => r.kind), ['spell']);
+});
+
+test('scaling_stat without min_scaling means "scales with this stat at all", not unfiltered', () => {
+  const scaled = itemStats(dbs(), { kind: 'weapon', scaling_stat: 'int' }) as any;
+  assert.deepEqual(scaled.rows.map((r: any) => r.name), ["Azur's Glintstone Staff"]);
+  const dexScaled = itemStats(dbs(), { kind: 'weapon', scaling_stat: 'dex' }) as any;
+  assert.deepEqual(dexScaled.rows.map((r: any) => r.name), ["Celebrant's Skull", 'Uchigatana']);
+});
+
+test('itemStats rejects min_scaling with no scaling_stat rather than dropping it', () => {
+  const result = itemStats(dbs(), { kind: 'weapon', min_scaling: 'A' }) as any;
+  assert.equal(result.error, 'invalid_filter');
+  assert.match(result.detail, /scaling_stat/);
 });
 
 test('bossInfo via redirect returns boss row and fragment section', () => {
@@ -124,14 +158,21 @@ test('getPage returns only the fragment section when the redirect fragment does 
   assert.deepEqual(page.sections.map((s: any) => s.heading), ['Overview']);
 });
 
-test('getPage still reports not_found for an explicitly requested section that does not exist', () => {
+// Saying "no page matched" when the page did match makes a model report that the item does not
+// exist. The page was found; only the section was not, and the real headings say what to ask for.
+test('getPage distinguishes a missing section on a real page from a missing page', () => {
   const result = getPage(dbs(), "Azur's Glintstone Staff", 'Nonexistent Section') as any;
-  assert.equal(result.not_found, true);
+  assert.equal(result.not_found, undefined, 'the page exists, so this is not a page miss');
+  assert.equal(result.section_not_found, true);
+  assert.equal(result.page, "Azur's Glintstone Staff");
+  assert.equal(result.section, 'Nonexistent Section');
+  assert.deepEqual(result.headings, ['Summary', 'Acquisition']);
+  assert.equal(result.provenance.revid, 100);
 });
 
 test('sourcesStatus reports sync and counts', () => {
   const status = sourcesStatus(dbs());
-  assert.equal(status.shipped?.pages, 6);
+  assert.equal(status.shipped?.pages, 9);
   assert.equal(status.local, null);
 });
 
@@ -141,26 +182,57 @@ test('itemStats skips kinds whose table cannot express the filter', () => {
   const scaled = itemStats(dbs(), { scaling_stat: 'int', min_scaling: 'C' }) as any;
   assert.deepEqual(scaled.rows.map((r: any) => r.kind), ['weapon']);
   const byStrReq = itemStats(dbs(), { max_req: { str: 60 } }) as any;
-  assert.deepEqual(byStrReq.rows.map((r: any) => r.kind), ['weapon']);
+  assert.deepEqual(byStrReq.rows.map((r: any) => [r.kind, r.name]), [['weapon', "Azur's Glintstone Staff"], ['weapon', 'Uchigatana']]);
   const byIntReq = itemStats(dbs(), { max_req: { int: 60 } }) as any;
   assert.deepEqual(byIntReq.rows.map((r: any) => r.kind), ['weapon', 'spell']);
 });
 
-test('itemStats ignores stat keys and scaling stats outside the allow-list', () => {
+test('itemStats ignores stat keys outside the allow-list and rejects an unknown scaling stat', () => {
   const injected = { int: 60, 'x_req, 0) OR 1=1 --': 1 } as unknown as Partial<Record<'int', number>>;
   const byName = itemStats(dbs(), { kind: 'weapon', max_req: injected }) as any;
   assert.deepEqual(byName.rows.map((r: any) => r.name), ["Azur's Glintstone Staff"]);
+  // A stat name that is not in the allow-list can never reach SQL, and must not quietly become
+  // "no scaling filter at all" either.
   const badStat = itemStats(dbs(), { kind: 'weapon', scaling_stat: 'hp' as any, min_scaling: 'C' }) as any;
-  assert.deepEqual(badStat.rows.map((r: any) => r.name), ["Azur's Glintstone Staff"]);
+  assert.equal(badStat.error, 'invalid_filter');
+  assert.equal(badStat.rows, undefined);
 });
 
-test('itemStats ignores an out-of-range min_scaling instead of inverting it', () => {
+// An unparseable grade must not invert the filter, and must not drop it either: it falls back to the
+// weakest grade, which still means "scales with this stat".
+test('itemStats treats an out-of-range min_scaling as E instead of inverting or dropping it', () => {
   const rows = (itemStats(dbs(), { kind: 'weapon', scaling_stat: 'int', min_scaling: 'Z' }) as any).rows;
   assert.deepEqual(rows.map((r: any) => r.name), ["Azur's Glintstone Staff"]);
 });
 
-test('getPage returns not_found when the requested section matches nothing', () => {
-  assert.deepEqual(getPage(dbs(), "Azur's Glintstone Staff", 'no such section'), { not_found: true, query: "Azur's Glintstone Staff", hint: HINT });
+test('getPage names the page and its headings when the requested section matches nothing', () => {
+  const result = getPage(dbs(), "Azur's Glintstone Staff", 'no such section') as any;
+  assert.equal(result.section_not_found, true);
+  assert.ok(!('hint' in result) || !result.hint.includes('No page matched'), 'must not claim the page is missing');
+  assert.deepEqual(result.headings, ['Summary', 'Acquisition']);
+  // A page that really is missing still reports a page miss.
+  assert.deepEqual(getPage(dbs(), 'zzqx nonsense', 'Acquisition'), { not_found: true, query: 'zzqx nonsense', hint: HINT });
+});
+
+// Fourteen real pages (Gravebird Helm, Flamespitter, Catapult…) are emptied by template and table
+// stripping. Returning provenance and nothing else looks like an answer but carries no text.
+test('getPage reports a miss with a reason when the page resolves but holds no sections', () => {
+  const result = getPage(dbs(), 'Flamespitter') as any;
+  assert.equal(result.not_found, true);
+  assert.equal(result.reason, 'no_sections');
+  assert.equal(result.page, 'Flamespitter');
+  assert.equal(result.provenance.title, 'Flamespitter', 'the page is still citable');
+  assert.match(result.hint, /fetch: true/);
+});
+
+// A zero-match search used to compact down to a bare {}, which reads as a malformed answer.
+test('search and item_stats report an explicit miss, never an empty object', () => {
+  const zero = search(dbs(), 'zzqx nonsense') as any;
+  assert.equal(zero.not_found, true);
+  assert.equal(zero.query, 'zzqx nonsense');
+  assert.equal((search(dbs(), '!!!') as any).not_found, true);
+  const noRows = itemStats(dbs(), { kind: 'talisman', max_req: { str: 10 } }) as any;
+  assert.equal(noRows.not_found, true);
 });
 
 test('a strong local match beats a weak full-text hit in shipped data', () => {

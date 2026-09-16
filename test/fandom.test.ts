@@ -29,6 +29,21 @@ test('http gives up after retries and does not retry 404', async () => {
   assert.equal(calls, 1);
 });
 
+// The minimum interval is a promise to the wiki, so it has to hold for calls that overlap: two
+// requests started before either finishes must not both read the same "last request" timestamp.
+test('http reserves its slot before awaiting, so concurrent calls still space out', async () => {
+  const sleeps: number[] = [];
+  const get = createHttp({
+    userAgent: 'ua', minIntervalMs: 1000,
+    fetchImpl: async () => response(200, 'ok'),
+    sleep: async (ms) => { sleeps.push(ms); },
+  });
+  await Promise.all([get('https://x/1'), get('https://x/2'), get('https://x/3')]);
+  assert.equal(sleeps.length, 2, `expected the 2nd and 3rd calls to wait, got sleeps ${sleeps.join(',')}`);
+  assert.ok(sleeps[0] >= 900 && sleeps[0] <= 1000, `first wait ${sleeps[0]}`);
+  assert.ok(sleeps[1] >= 1900 && sleeps[1] <= 2000, `second wait ${sleeps[1]}`);
+});
+
 test('http retries thrown network errors', async () => {
   let calls = 0;
   const get = createHttp({ userAgent: 'ua', minIntervalMs: 0, sleep: noSleep, fetchImpl: async () => { if (++calls < 3) throw new Error('ECONNRESET'); return response(200, 'ok'); } });

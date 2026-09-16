@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fextralifeUrl, htmlToWikiMarkdown } from '../src/sources/fextralife.js';
+import { FEXTRALIFE_PAGE_LIMIT, fetchFextralife, fextralifeUrl, htmlToWikiMarkdown, resetFextralifeSession } from '../src/sources/fextralife.js';
 import { cacheFextralife, localDbPath, openLocalDb } from '../src/store/local.js';
 import type { FetchLike } from '../src/sources/http.js';
 
@@ -41,6 +41,31 @@ test('localDbPath honors ELDEN_RING_MCP_CACHE', () => {
   process.env.ELDEN_RING_MCP_CACHE = '/tmp/er-cache';
   assert.equal(localDbPath(), '/tmp/er-cache/local.db');
   if (previous === undefined) delete process.env.ELDEN_RING_MCP_CACHE; else process.env.ELDEN_RING_MCP_CACHE = previous;
+});
+
+// The 1 request/second floor is the anti-bulk-crawl guard, so it has to live across calls: a fresh
+// client per fetch let N consecutive `fetch: true` tool calls fire N unthrottled requests.
+test('consecutive fetchFextralife calls share one rate limiter', async () => {
+  const sleeps: number[] = [];
+  let calls = 0;
+  resetFextralifeSession({
+    fetchImpl: async () => { calls++; return ok(HTML); },
+    sleep: async (ms) => { sleeps.push(ms); },
+    minIntervalMs: 1000,
+  });
+  await fetchFextralife('Page One');
+  await fetchFextralife('Page Two');
+  assert.equal(calls, 2);
+  assert.equal(sleeps.length, 1, `the second call must wait; sleeps were ${sleeps.join(',')}`);
+  assert.ok(sleeps[0] >= 900, `expected a ~1s wait, got ${sleeps[0]}`);
+  resetFextralifeSession();
+});
+
+test('one server process caps how many Fextralife pages it will fetch', async () => {
+  resetFextralifeSession({ fetchImpl: async () => ok(HTML), sleep: async () => {}, minIntervalMs: 0 });
+  for (let i = 0; i < FEXTRALIFE_PAGE_LIMIT; i++) assert.ok(await fetchFextralife(`Page ${i}`));
+  await assert.rejects(fetchFextralife('One Too Many'), /limit/i);
+  resetFextralifeSession();
 });
 
 test('cacheFextralife stores a local-only page with Fextralife license; 404 returns null', async () => {

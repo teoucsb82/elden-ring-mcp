@@ -1,5 +1,8 @@
 // Downloads data/elden-ring.db from the newest GitHub release tagged data-*.
 // Run: npm run fetch-data   (set ELDEN_RING_MCP_REPO=owner/name if not the default remote)
+// Exit codes: 0 downloaded, 2 no data-* release exists yet (expected before the first publish),
+// 1 something went wrong (API error, bad response, failed download). Callers must treat 1 as fatal:
+// swallowing it turns a transient GitHub error into a silent full re-crawl of every page.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { DEFAULT_DB_PATH } from '../src/store/pages.js';
@@ -18,11 +21,19 @@ function resolveRepo(): string {
 }
 
 const repo = resolveRepo();
-const releases = await (await fetch(`https://api.github.com/repos/${repo}/releases?per_page=30`, { headers: { Accept: 'application/vnd.github+json' } })).json() as { tag_name: string; assets: { name: string; browser_download_url: string }[] }[];
+const listUrl = `https://api.github.com/repos/${repo}/releases?per_page=30`;
+const listResponse = await fetch(listUrl, { headers: { Accept: 'application/vnd.github+json' } });
+if (!listResponse.ok) { console.error(`GitHub API ${listResponse.status} for ${listUrl}`); process.exit(1); }
+const body: unknown = await listResponse.json();
+if (!Array.isArray(body)) { console.error(`Unexpected GitHub API response for ${listUrl}: ${JSON.stringify(body).slice(0, 200)}`); process.exit(1); }
+const releases = body as { tag_name: string; assets: { name: string; browser_download_url: string }[] }[];
 const release = releases.find((r) => r.tag_name.startsWith('data-'));
 const asset = release?.assets.find((a) => a.name === 'elden-ring.db');
-if (!release || !asset) { console.error(`No data-* release with elden-ring.db in ${repo}`); process.exit(1); }
-const bytes = Buffer.from(await (await fetch(asset.browser_download_url)).arrayBuffer());
+// No release yet is a normal first run; an API failure above is not, and already exited 1.
+if (!release || !asset) { console.error(`No data-* release with elden-ring.db in ${repo}`); process.exit(2); }
+const download = await fetch(asset.browser_download_url);
+if (!download.ok) { console.error(`Download failed: HTTP ${download.status} for ${asset.browser_download_url}`); process.exit(1); }
+const bytes = Buffer.from(await download.arrayBuffer());
 mkdirSync('data', { recursive: true });
 writeFileSync(DEFAULT_DB_PATH, bytes);
 console.log(`downloaded ${release.tag_name} (${(bytes.length / 1e6).toFixed(1)} MB) to ${DEFAULT_DB_PATH}`);

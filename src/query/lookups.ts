@@ -6,10 +6,12 @@ import { ftsQuery, resolveName, type Provenance, type Resolved } from './resolve
 
 export interface NotFound { not_found: true; query: string; hint: string }
 
-const notFound = (query: string): NotFound => ({
-  not_found: true, query,
-  hint: 'No page matched in the shipped data or local cache. Try search, or pass fetch: true to cache the Fextralife page.',
-});
+const NO_PAGE_HINT = 'No page matched in the shipped data or local cache. Try search, or pass fetch: true to cache the Fextralife page.';
+
+const notFound = (query: string): NotFound => ({ not_found: true, query, hint: NO_PAGE_HINT });
+
+/** A miss that is not a missing page: say what was searched and why nothing came back. */
+const noMatch = (query: string, hint: string): NotFound => ({ not_found: true, query, hint });
 
 type SectionOut = { heading: string; markdown: string };
 
@@ -20,10 +22,13 @@ function sectionsOf(r: Resolved, heading?: RegExp): SectionOut[] {
 
 const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const NO_SEARCH_HINT = 'Nothing in the shipped data or the local cache matches these words. Try fewer or different words, or pass fetch: true on get_page to cache the Fextralife page.';
+
 export function search(dbs: Dbs, query: string, limit = 10) {
   const fts = ftsQuery(query);
   const results: { title: string; heading: string; snippet: string; provenance: Provenance }[] = [];
-  if (!fts) return { results };
+  // Zero hits is a miss, not an answer: an empty result set used to serialize as a bare {}.
+  if (!fts) return noMatch(query, NO_SEARCH_HINT);
   for (const db of [dbs.shipped, dbs.local]) {
     if (!db) continue;
     const rows = db.prepare(`
@@ -34,7 +39,7 @@ export function search(dbs: Dbs, query: string, limit = 10) {
     `).all(fts, limit) as (Provenance & { heading: string; snippet: string })[];
     for (const { heading, snippet, ...provenance } of rows) results.push({ title: provenance.title, heading, snippet, provenance });
   }
-  return { results: results.slice(0, limit) };
+  return results.length ? { results: results.slice(0, limit) } : noMatch(query, NO_SEARCH_HINT);
 }
 
 /**
@@ -52,15 +57,36 @@ function withFragment<T extends object>(r: Resolved, fallback: () => SectionOut[
   return { ...base, fragment: r.fragment, fragment_matched: matched, sections: matched ? fragmentSections : fallback() };
 }
 
+/**
+ * Fourteen shipped pages (Gravebird Helm, Flamespitter, Catapult…) are nothing but an infobox and a
+ * table, so stripping leaves no sections at all. Provenance with no text reads as an answer; say it
+ * is a miss and why, while still handing back the citation so the page can be linked or fetched.
+ */
+const emptyPage = (query: string, r: Resolved) => ({
+  not_found: true as const, query, reason: 'no_sections' as const, page: r.provenance.title,
+  provenance: r.provenance,
+  hint: 'This page is in the snapshot but its wiki text is entirely templates and tables, so it holds no readable sections. Try search for pages that describe it, or pass fetch: true to cache the Fextralife page.',
+});
+
+/** The page was found and the section was not: naming the page's real headings says what to ask for next. */
+const sectionNotFound = (r: Resolved, section: string, headings: string[]) => ({
+  section_not_found: true as const, page: r.provenance.title, section, headings,
+  provenance: r.provenance, match: r.match,
+  hint: `The page "${r.provenance.title}" exists but has no section matching "${section}". Ask again with one of the headings listed, or omit section for the whole page. This says nothing about whether the section's subject exists.`,
+});
+
 export function getPage(dbs: Dbs, title: string, section?: string) {
   const r = resolveName(dbs, title);
   if (!r) return notFound(title);
+  const all = sectionsOf(r);
+  if (!all.length) return emptyPage(title, r);
   if (section) {
-    const sections = sectionsOf(r, new RegExp(escapeRegex(section), 'i'));
-    // An asked-for section that matches nothing is a miss, not an empty page.
-    return sections.length ? { provenance: r.provenance, match: r.match, sections } : notFound(title);
+    const wanted = new RegExp(escapeRegex(section), 'i');
+    const sections = all.filter((row) => wanted.test(row.heading));
+    // An asked-for section that matches nothing is a section miss, never a missing page.
+    return sections.length ? { provenance: r.provenance, match: r.match, sections } : sectionNotFound(r, section, all.map((row) => row.heading));
   }
-  return withFragment(r, () => sectionsOf(r), {});
+  return withFragment(r, () => all, {});
 }
 
 /** Stored prereqs are always a JSON array, but a malformed row must not take the whole answer down. */
@@ -109,6 +135,10 @@ function provenanceOf(db: Db, pageId: number): Provenance {
   return db.prepare('SELECT source, title, url, revid, fetched_at, license FROM pages WHERE id = ?').get(pageId) as Provenance;
 }
 
+export interface FilterError { error: 'invalid_filter' | 'kind_mismatch'; detail: string }
+
+const invalidFilter = (detail: string): FilterError => ({ error: 'invalid_filter', detail });
+
 export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scaling_stat?: Stat; min_scaling?: string; max_req?: Partial<Record<Stat, number>>; limit?: number }) {
   const limit = filter.limit ?? 25;
   if (filter.name) {
@@ -116,13 +146,25 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
     if (!r) return notFound(filter.name);
     const rows = (Object.entries(KIND_TABLE) as [Kind, string][]).flatMap(([kind, table]) =>
       (r.db.prepare(`SELECT * FROM ${table} WHERE page_id = ?`).all(r.pageId) as Record<string, unknown>[]).map((row) => ({ kind, ...row, provenance: r.provenance })));
-    return rows.length ? { rows } : notFound(filter.name);
+    if (!rows.length) return notFound(filter.name);
+    if (!filter.kind) return { rows };
+    // name + kind used to ignore kind, so asking for the spell "Uchigatana" handed back the katana.
+    const matching = rows.filter((row) => row.kind === filter.kind);
+    if (matching.length) return { rows: matching };
+    const kinds = [...new Set(rows.map((row) => row.kind))].join(', ');
+    return { error: 'kind_mismatch' as const, detail: `"${r.provenance.title}" is in the data as ${kinds}, not as a ${filter.kind}. Drop kind, or ask for the kind it actually is.` };
   }
-  // Both filters are dropped unless every part of them is valid: a bad stat name or grade must never
-  // silently become a different (or inverted) filter.
+  // A filter is never dropped in silence: an unusable one is an error, and a grade that cannot be
+  // read falls back to the weakest grade (still "scales with this stat"), never to "no filter".
+  if (filter.scaling_stat && !isStat(filter.scaling_stat)) {
+    return invalidFilter(`scaling_stat must be one of ${STATS.join(', ')}; got "${String(filter.scaling_stat)}".`);
+  }
+  if (filter.min_scaling && !filter.scaling_stat) {
+    return invalidFilter('min_scaling needs scaling_stat: a grade on its own does not say which stat it applies to.');
+  }
   const scalingStat = filter.scaling_stat && isStat(filter.scaling_stat) ? filter.scaling_stat : null;
   const gradeIndex = filter.min_scaling ? SCALING_ORDER.indexOf(filter.min_scaling.toUpperCase() as (typeof SCALING_ORDER)[number]) : -1;
-  const scaling = scalingStat && gradeIndex >= 0 ? { stat: scalingStat, allowed: SCALING_ORDER.slice(gradeIndex) } : null;
+  const scaling = scalingStat ? { stat: scalingStat, allowed: SCALING_ORDER.slice(Math.max(gradeIndex, 0)) } : null;
   const maxReq = Object.entries(filter.max_req ?? {}).filter((entry): entry is [Stat, number] => isStat(entry[0]) && typeof entry[1] === 'number');
 
   const kinds = filter.kind ? [filter.kind] : (Object.keys(KIND_TABLE) as Kind[]);
@@ -138,12 +180,16 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
         where.push(`${scaling.stat}_scale IN (${scaling.allowed.map(() => '?').join(', ')})`);
         params.push(...scaling.allowed);
       }
-      for (const [stat, max] of maxReq) { where.push(`coalesce(${stat}_req, 0) <= ?`); params.push(max); }
+      // An unparsed requirement is unknown, not free: coalesce(…, 0) answered "usable at 0 STR" for
+      // Celebrant's Skull and Unarmed. Exclude unknowns rather than assert them.
+      for (const [stat, max] of maxReq) { where.push(`${stat}_req IS NOT NULL AND ${stat}_req <= ?`); params.push(max); }
       const sql = `SELECT * FROM ${KIND_TABLE[kind]}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY name LIMIT ?`;
       for (const row of db.prepare(sql).all(...params, limit) as Record<string, unknown>[]) rows.push({ kind, ...row, provenance: provenanceOf(db, row.page_id as number) });
     }
   }
-  return { rows: rows.slice(0, limit) };
+  if (rows.length) return { rows: rows.slice(0, limit) };
+  return noMatch(JSON.stringify({ kind: filter.kind, scaling_stat: filter.scaling_stat, min_scaling: filter.min_scaling, max_req: filter.max_req }),
+    'No item in the snapshot matches every filter. Loosen them (raise max_req, lower min_scaling, drop kind). Items whose requirement the wiki does not state are excluded from max_req filters rather than counted as zero.');
 }
 
 export function bossInfo(dbs: Dbs, name: string) {

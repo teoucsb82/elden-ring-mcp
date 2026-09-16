@@ -14,14 +14,26 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
       - run: npm ci
+      # Exit 2 means there is no data-* release yet, which is fine on a first run. Any other failure
+      # is a real error: swallowing it would silently re-crawl all 4,922 pages from scratch.
       - name: Restore previous db
-        run: npm run fetch-data || echo "no previous release; full build"
+        run: |
+          set +e
+          npm run fetch-data
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then exit 0; fi
+          if [ "$status" -eq 2 ]; then echo "No data-* release yet; doing a full build."; exit 0; fi
+          echo "::error::fetch-data failed (exit $status); refusing to fall back to a full re-crawl."
+          exit "$status"
       - run: npm run build
       - run: npm run attribution
       - name: Publish release
+        id: release
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
           TAG="data-$(date -u +%Y.%m.%d)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           awk '/^## /{n++} n==1' data/CHANGELOG-data.md > /tmp/release-notes.md
           gh release create "$TAG" data/elden-ring.db --title "$TAG" --notes-file /tmp/release-notes.md
       - name: Open PR with changelog
@@ -30,7 +42,7 @@ jobs:
           branch: data/weekly
           commit-message: 'data: weekly sync'
           title: 'data: weekly sync'
-          body: 'Automated Fandom sync. Release: data-${{ github.run_id }}. See data/CHANGELOG-data.md.'
+          body: 'Automated Fandom sync. Release: ${{ steps.release.outputs.tag }}. See data/CHANGELOG-data.md.'
           add-paths: |
             data/CHANGELOG-data.md
             data/ATTRIBUTION.md

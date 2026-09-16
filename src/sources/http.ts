@@ -17,19 +17,26 @@ export interface HttpOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-/** GET-as-text with a per-client minimum interval and retries for 429, 5xx and network errors. */
+/**
+ * GET-as-text with a per-client minimum interval and retries for 429, 5xx and network errors.
+ * Keep one client per host for the life of the process: the interval is only a limit if callers
+ * share it. `globalThis.fetch` is read per call so a module-level client is still stubbable.
+ */
 export function createHttp(opts: HttpOptions): (url: string) => Promise<string> {
-  const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+  const fetchImpl: FetchLike = opts.fetchImpl ?? ((url, init) => (globalThis.fetch as unknown as FetchLike)(url, init));
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const minInterval = opts.minIntervalMs ?? 1000;
   const retries = opts.retries ?? 3;
-  let lastRequest = 0;
+  // The next instant a request may leave. Each attempt claims its slot *before* awaiting, so two
+  // overlapping calls take consecutive slots instead of both reading the same idle timestamp.
+  let nextSlot = 0;
 
   return async function getText(url: string): Promise<string> {
     for (let attempt = 0; ; attempt++) {
-      const wait = lastRequest + minInterval - Date.now();
-      if (wait > 0) await sleep(wait);
-      lastRequest = Date.now();
+      const now = Date.now();
+      const slot = Math.max(now, nextSlot);
+      nextSlot = slot + minInterval;
+      if (slot > now) await sleep(slot - now);
       let res;
       try {
         res = await fetchImpl(url, { headers: { 'User-Agent': opts.userAgent } });

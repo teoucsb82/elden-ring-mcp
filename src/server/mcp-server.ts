@@ -9,26 +9,12 @@ import { z } from 'zod';
 import { openDbs } from '../query/dbs.js';
 import { bossInfo, getPage, itemStats, questSteps, search, sourcesStatus, whereIs } from '../query/lookups.js';
 import { cacheFextralife } from '../store/local.js';
+import { compact } from './compact.js';
 
 const INSTRUCTIONS = `Elden Ring reference data from a versioned snapshot of eldenring.fandom.com (CC BY-SA 3.0), plus an optional per-user Fextralife page cache. Every result carries provenance (source, title, url, revid, fetched_at, license): cite it when answering. A result with not_found means the data does not cover it; say so instead of guessing, or retry with fetch: true to cache the Fextralife page. Fandom and Fextralife sometimes disagree on numbers; when both are present, show both with their sources. Directions from the wiki may omit prerequisites; state prerequisites the result lists.`;
 
 const server = new McpServer({ name: 'elden-ring', version: '0.1.0' }, { instructions: INSTRUCTIONS });
 const dbs = openDbs();
-
-/** Drops null, undefined, empty arrays and empty objects so results carry only fields with content. */
-function compact(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(compact);
-  if (!value || typeof value !== 'object') return value;
-  const kept: Record<string, unknown> = {};
-  for (const [key, field] of Object.entries(value)) {
-    const clean = compact(field);
-    const empty = clean === null || clean === undefined
-      || (Array.isArray(clean) && !clean.length)
-      || (typeof clean === 'object' && !Array.isArray(clean) && !Object.keys(clean).length);
-    if (!empty) kept[key] = clean;
-  }
-  return kept;
-}
 
 const reply = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(compact(value)) }] });
 const fail = (error: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify({ error: 'tool_failed', detail: error instanceof Error ? error.message : String(error) }) }], isError: true });
@@ -85,7 +71,7 @@ server.registerTool('quest_steps', {
 
 server.registerTool('item_stats', {
   title: 'Item stats',
-  description: 'Requirements, scaling, weight and effects for weapons, spells, talismans and armor. Give `name` for one item, or filter: kind, scaling_stat + min_scaling (weapons), max_req per stat.',
+  description: 'Requirements, scaling, weight and effects for weapons, spells, talismans and armor. Give `name` for one item: it wins over the other filters, but `kind` must agree with the item or you get kind_mismatch. Otherwise filter: kind, scaling_stat (weapons; min_scaling defaults to E, i.e. scales with that stat at all, and min_scaling alone is an error), max_req per stat (items whose requirement the wiki does not state are excluded, not treated as 0). No match returns not_found.',
   inputSchema: {
     name: z.string().optional().describe('One item by name'),
     kind: z.enum(['weapon', 'spell', 'talisman', 'armor']).optional(),
