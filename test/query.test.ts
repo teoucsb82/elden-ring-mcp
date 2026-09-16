@@ -348,6 +348,20 @@ test('whereIs on a dlc item in all mode answers', () => {
   assert.equal(result.dlc, true);
 });
 
+test('whereIs on a base-game item in only mode names base-game content, not DLC', () => {
+  const dbs = fixtureDbs([{ title: 'Icerind Hatchet', wikitext: 'axe', dlc: 0 }]);
+  const result = whereIs(dbs, 'Icerind Hatchet', 'only') as { not_found: true; reason: string; page: string; hint: string };
+  assert.equal(result.not_found, true);
+  assert.equal(result.reason, 'dlc_filtered');
+  assert.equal(result.page, 'Icerind Hatchet');
+  // The item is base game and this call asked for DLC only — the hint must say that, not its
+  // opposite: a hardcoded base-mode wording would call a base-game item "Shadow of the Erdtree
+  // content" and claim the call "asked for base-game results", both false here.
+  assert.match(result.hint, /base.game/i);
+  assert.doesNotMatch(result.hint, /Shadow of the Erdtree/);
+  assert.doesNotMatch(result.hint, /asked for base-game results/);
+});
+
 test('a genuinely missing page is not reported as dlc_filtered', () => {
   const dbs = fixtureDbs([{ title: 'Icerind Hatchet', wikitext: 'axe', dlc: 0 }]);
   const result = whereIs(dbs, 'Sword Of Nothing At All', 'base') as { not_found: true; reason?: string };

@@ -3,16 +3,21 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { compact } from '../src/server/compact.js';
+import { buildFixtureDb } from './fixtures/build-fixture-db.js';
 
-// Isolate the local cache db this import opens as a side effect, so the test never touches
-// the real ~/.cache/elden-ring-mcp used by an actual `npm run mcp`.
-process.env.ELDEN_RING_MCP_CACHE ??= mkdtempSync(join(tmpdir(), 'er-server-test-'));
+// Isolate the local cache db this import opens as a side effect, so the test never touches the real
+// ~/.cache/elden-ring-mcp used by an actual `npm run mcp` — even for a developer who has that env var
+// exported already. Plain `=`, not `??=`: this must win unconditionally, not defer to it.
+process.env.ELDEN_RING_MCP_CACHE = mkdtempSync(join(tmpdir(), 'er-server-test-'));
 
-// mcp-server.ts only connects stdio when run as the entry point, so importing it here (to read
-// `server` and `INSTRUCTIONS`) is side-effect-free beyond opening the dbs above.
+// mcp-server.ts never starts stdio just by being imported — only its exported startStdio() does
+// that (see src/server/start.ts) — so importing it here for `server` and `INSTRUCTIONS` is
+// side-effect-free beyond opening the dbs above.
 const { server, INSTRUCTIONS } = await import('../src/server/mcp-server.js');
 
 /** Lists the server's registered tools over a same-process (in-memory) MCP client/server pair. */
@@ -26,6 +31,8 @@ async function listTools() {
     await client.close();
   }
 }
+
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 test('compact drops null, undefined and empty containers', () => {
   assert.deepEqual(compact({ a: 1, b: null, c: undefined, d: [], e: {}, f: 'x' }), { a: 1, f: 'x' });
@@ -79,4 +86,33 @@ test('every lookup tool accepts a dlc mode', async () => {
 test('the server instructions state the base-game default', () => {
   assert.match(INSTRUCTIONS, /base game/i);
   assert.match(INSTRUCTIONS, /dlc_filtered/);
+});
+
+// This spawns the real entry point (src/server/start.ts) as a subprocess over stdio, the same way an
+// MCP client (Claude Code, an .mcp.json entry) actually launches the server — unlike listTools()
+// above, which talks to the in-process `server` object directly and would stay green even if
+// start.ts never called startStdio() at all. That gap is exactly what left the argv-guessing guard
+// this test replaces untested: 144/144 passed with `if (false)` in its place.
+test('the server actually boots over stdio and answers initialize', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'er-server-boot-'));
+  const dbPath = join(dir, 'fixture.db');
+  buildFixtureDb(dbPath).close();
+
+  const client = new Client({ name: 'server-boot-test', version: '0.0.0' });
+  await client.connect(
+    new StdioClientTransport({
+      command: 'npx',
+      args: ['tsx', 'src/server/start.ts'],
+      cwd: REPO_ROOT,
+      env: { ...process.env, ELDEN_RING_MCP_DB: dbPath, ELDEN_RING_MCP_CACHE: join(dir, 'cache') } as Record<string, string>,
+    }),
+    { timeout: 10_000 },
+  );
+  try {
+    assert.equal(client.getServerVersion()?.name, 'elden-ring');
+    const { tools } = await client.listTools();
+    assert.ok(tools.find((t) => t.name === 'where_is'));
+  } finally {
+    await client.close();
+  }
 });

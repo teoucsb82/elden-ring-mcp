@@ -22,10 +22,12 @@ const noMatch = (query: string, hint: string): NotFound => ({ not_found: true, q
  * The page exists but the caller's own mode excluded it. Distinct from not_found so an answer never
  * claims the snapshot lacks something it holds.
  */
-const dlcFiltered = (query: string, r: DlcFiltered) => ({
+const dlcFiltered = (query: string, r: DlcFiltered, mode: DlcMode) => ({
   not_found: true as const, query, reason: 'dlc_filtered' as const, page: r.title,
   provenance: r.provenance,
-  hint: `"${r.title}" is Shadow of the Erdtree content and this call asked for base-game results. Re-run with dlc: "all" to include the DLC, or dlc: "only" for DLC alone.`,
+  hint: mode === 'only'
+    ? `"${r.title}" is base-game content and this call asked for DLC only. Re-run with dlc: "all" to include the base game, or dlc: "base" for the base game alone.`
+    : `"${r.title}" is Shadow of the Erdtree content and this call asked for base-game results. Re-run with dlc: "all" to include the DLC, or dlc: "only" for DLC alone.`,
 });
 
 type ResolveOutcome =
@@ -37,7 +39,7 @@ type ResolveOutcome =
 function resolveFor(dbs: Dbs, name: string, mode: DlcMode): ResolveOutcome {
   const r = resolveName(dbs, name, mode);
   if (!r) return { kind: 'missing', miss: notFound(name) };
-  if (isDlcFiltered(r)) return { kind: 'filtered', miss: dlcFiltered(name, r) };
+  if (isDlcFiltered(r)) return { kind: 'filtered', miss: dlcFiltered(name, r, mode) };
   return { kind: 'ok', resolved: r };
 }
 

@@ -1,8 +1,10 @@
 // Elden Ring lookups over the shipped Fandom snapshot (data/elden-ring.db) plus the user's local Fextralife cache.
 // Network access happens only when a tool is called with fetch: true (one Fextralife page into the local cache).
-// Run: npx tsx src/server/mcp-server.ts (stdio; Claude Code spawns it via .mcp.json)
+// This module only builds `server` and its tools and exports `startStdio()` — it never starts stdio
+// on import, so it stays safe to import from a test (or, later, the npm-distribution guard file in
+// docs/superpowers/specs/2026-09-15-npm-distribution-design.md §2) without side effects.
+// To actually run the server: npx tsx src/server/start.ts (stdio; see that file, or `npm run mcp`).
 
-import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -14,7 +16,7 @@ import { compact } from './compact.js';
 
 export const INSTRUCTIONS = `Elden Ring reference data from a versioned snapshot of eldenring.fandom.com (CC BY-SA 3.0), plus an optional per-user Fextralife page cache. Every result carries provenance (source, title, url, revid, fetched_at, license): cite it when answering.
 
-Results are base game only by default. Pass dlc: "all" to include Shadow of the Erdtree content, or dlc: "only" for DLC content alone. A result with reason: "dlc_filtered" means the page exists but this call asked for base-game results: say so and offer to re-run with dlc: "all"; never report it as missing data. A result with has_dlc_sections means a base-game page whose text also discusses DLC events.
+Results are base game only by default. Pass dlc: "all" to include Shadow of the Erdtree content, or dlc: "only" for DLC content alone. A result with reason: "dlc_filtered" means the page exists but this call's dlc mode excluded it — base mode (the default) excludes DLC content, only mode excludes base-game content — and the hint on the result says which way and how to re-run; never report it as missing data. A result with has_dlc_sections: true means a base-game page whose text also discusses DLC events; it is present and false on nearly every page, so its absence proves nothing.
 
 A result with not_found and no reason means the data does not cover it; say so instead of guessing, or retry with fetch: true to cache the Fextralife page. Fandom and Fextralife sometimes disagree on numbers; when both are present, show both with their sources. Directions from the wiki may omit prerequisites; state prerequisites the result lists.`;
 
@@ -108,8 +110,11 @@ server.registerTool('sources_status', {
   annotations: READ_ONLY,
 }, async () => { try { return reply(sourcesStatus(dbs)); } catch (error) { return fail(error); } });
 
-// Only connect stdio when this file is run directly (`npx tsx src/server/mcp-server.ts`), not when
-// imported (e.g. by tests wanting `server` or `INSTRUCTIONS`) — importing must not start a live server.
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+/**
+ * Starts the server over stdio. Importing this module must never do this on its own — tests import
+ * it for `server` and `INSTRUCTIONS` alone, and a future npm-distribution entry file may import it
+ * dynamically too — so starting is only ever an explicit call. src/server/start.ts is that call.
+ */
+export async function startStdio() {
   await server.connect(new StdioServerTransport());
 }

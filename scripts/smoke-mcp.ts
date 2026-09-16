@@ -18,7 +18,7 @@ if (!process.env.ELDEN_RING_MCP_DB) buildFixtureDb(dbPath).close();
 const client = new Client({ name: 'elden-ring-smoke', version: '0.0.0' });
 await client.connect(new StdioClientTransport({
   command: 'npx',
-  args: ['tsx', 'src/server/mcp-server.ts'],
+  args: ['tsx', 'src/server/start.ts'],
   cwd: fileURLToPath(new URL('..', import.meta.url)),
   env: { ...process.env, ELDEN_RING_MCP_DB: dbPath, ELDEN_RING_MCP_CACHE: join(dir, 'cache') } as Record<string, string>,
 }));
