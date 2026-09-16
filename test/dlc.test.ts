@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { classifyDlc, classifyPage, DLC_SIGNALS, loadOverrides, type Overrides } from '../src/extract/dlc.js';
+import { classifyDlc, classifyPage, DLC_SIGNALS, indexLinkedTitles, loadOverrides, type IndexLinkStat, type Overrides } from '../src/extract/dlc.js';
 import { runExtractors } from '../src/extract/run.js';
 import type { PageRow } from '../src/extract/types.js';
 import { memoryDb } from './helpers.js';
@@ -15,7 +15,7 @@ const insert = (db: ReturnType<typeof memoryDb>, title: string, wikitext: string
 
 const page = (title: string, wikitext: string | null): PageRow => ({ id: 1, source: 'fandom', title, wikitext });
 const noOverrides: Overrides = { dlc: [], base: [] };
-const ctx = (overrides = noOverrides, titles: string[] = []) => ({ overrides, dlcCategoryTitles: new Set(titles) });
+const ctx = (overrides = noOverrides, titles: string[] = []) => ({ overrides, dlcCategoryTitles: new Set(titles), indexLinkedTitles: new Set<string>() });
 
 test('the SotE template marks a page as dlc', () => {
   const result = classifyPage(page('Verdigris Armor', '{{Infobox Armor}}\nAdded in the {{SotE}} expansion.'), ctx());
@@ -40,6 +40,84 @@ test('dlc category membership marks a page as dlc', () => {
   const result = classifyPage(page('Scadu Altus', 'A region.'), ctx(noOverrides, ['Scadu Altus']));
   assert.equal(result.dlc, true);
   assert.ok(result.signals.includes('category'));
+});
+
+// The DLC's own index pages are the only signal that reaches pages the wiki never marked at all:
+// Rellana's Twin Blades says "featured in {{ER}}", with no template, no link and no category.
+test('pages linked from a DLC index page are dlc', () => {
+  const index = page('Weapons (Shadow of the Erdtree)', "==Melee==\n* [[Rellana's Twin Blades]]\n* [[star-Lined Sword|Star-Lined]]\n* [[Weapons]]\n* [[File:x.png]]\n* [[Great Katanas#List|Great Katanas]]");
+  const linked = indexLinkedTitles([index], { dlc: [], base: ['Weapons'] });
+  assert.deepEqual([...linked].sort(), ['Great Katanas', "Rellana's Twin Blades", 'Star-Lined Sword']);
+  const result = classifyPage(page("Rellana's Twin Blades", "'''Rellana's Twin Blades''' are a [[Light Greatsword]] featured in {{ER}}."), { ...ctx(), indexLinkedTitles: linked });
+  assert.equal(result.dlc, true);
+  assert.deepEqual(result.signals, ['index_link']);
+});
+
+// "Enemies (Shadow of the Erdtree)" names every enemy the DLC contains, base-game returners included,
+// and tags only its own with an inline marker. Reading every link on it labelled 61 base-game
+// creatures - Basilisk, Wolf, Crucible Knight - as DLC.
+test('an index page that tags its entries contributes only the tagged ones', () => {
+  const index = page('Enemies (Shadow of the Erdtree)', [
+    "This page lists '''[[Enemies]]''' {{in|SE}}.",
+    '',
+    '==List of Enemies==',
+    '* [[Basilisk]]',
+    '* [[Crucible Knight]]<ref name="No Respawn"/>',
+    '* [[Bigmouth Imp]] {{SOTE}}',
+    '* [[Messmer Soldier]] {{in|se}}',
+  ].join('\n'));
+  const linked = indexLinkedTitles([index], { dlc: [], base: [] });
+  // The lead carries a marker of its own, so the hub it links survives; the override base list is
+  // what retires that, and a base hub is never DLC content anyway.
+  assert.deepEqual([...linked].sort(), ['Bigmouth Imp', 'Enemies', 'Messmer Soldier']);
+});
+
+// The counterpart: a gallery index lists DLC additions and nothing else, so it tags nothing and every
+// link on it still counts. Without this, the Tools and Throwing Pots indexes would go silent.
+test('an index page that tags nothing still contributes every link', () => {
+  const index = page('Tools (Shadow of the Erdtree)', [
+    "This page lists '''[[Tools]]''' added in the {{SotE}} expansion.",
+    '',
+    '==List of Tools==',
+    'ER Icon.png|[[Iris of Grace]]|link=Iris of Grace',
+    'ER Icon.png|[[Silver Horn Tender]]|link=Silver Horn Tender',
+  ].join('\n'));
+  const linked = indexLinkedTitles([index], { dlc: [], base: ['Tools'] });
+  assert.deepEqual([...linked].sort(), ['Iris of Grace', 'Silver Horn Tender']);
+});
+
+// The See Also footer links sibling indexes and other games outright: Nightreign is not the DLC.
+test('links in a See Also section are not index links', () => {
+  const index = page('Bosses (Shadow of the Erdtree)', [
+    '==Cerulean Coast==',
+    '* [[Ghostflame Dragon]]',
+    '',
+    '==See Also==',
+    '* [[Nightreign Bosses]]',
+    '* [[Characters (Shadow of the Erdtree)]]',
+  ].join('\n'));
+  const linked = indexLinkedTitles([index], { dlc: [], base: [] });
+  assert.deepEqual([...linked].sort(), ['Ghostflame Dragon']);
+  // Lower-case spelling, and any heading depth.
+  const lower = page('X (Shadow of the Erdtree)', '==List==\n* [[Kept]]\n\n===See also===\n* [[Dropped]]');
+  assert.deepEqual([...indexLinkedTitles([lower], { dlc: [], base: [] })], ['Kept']);
+});
+
+// The tagging rule is all-or-nothing per page, so a single new {{SotE}} on a gallery that tags
+// nothing today would silently drop the rest of it. Every index reports what it kept so that shows up
+// in the run output instead of as a quiet hole in the snapshot.
+test('each index page reports how many of its links it kept', () => {
+  const tagged = page('Enemies (Shadow of the Erdtree)', '==List==\n* [[Basilisk]]\n* [[Bigmouth Imp]] {{SOTE}}');
+  const untagged = page('Tools (Shadow of the Erdtree)', '==List==\n* [[Iris of Grace]]\n* [[File:x.png]]');
+  const stats: IndexLinkStat[] = [];
+  const linked = indexLinkedTitles([tagged, untagged, page('Icerind Hatchet', '[[Not An Index]]')], { dlc: [], base: [] }, stats);
+
+  assert.deepEqual([...linked].sort(), ['Bigmouth Imp', 'Iris of Grace']);
+  // Only index pages are reported, and the dropped link is counted in `links` but not in `kept`.
+  assert.deepEqual(stats, [
+    { title: 'Enemies (Shadow of the Erdtree)', kept: 1, links: 2, tagged: true },
+    { title: 'Tools (Shadow of the Erdtree)', kept: 1, links: 2, tagged: false },
+  ]);
 });
 
 test('a hub page that lists dlc items stays base and is flagged', () => {

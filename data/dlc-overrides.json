@@ -1,5 +1,16 @@
 {
   "_comment": "Human corrections to the DLC classifier. 'dlc' forces a page to DLC; 'base' forces it to base game. 'base' is for index/hub pages that list DLC items, and for base-game pages the wiki's own markers mislabel - Godslayer Incantations is base-game content whose second lead paragraph says 'All bosses in {{SotE}} are resistant...', the one page in the snapshot where a predicate marker sits outside the definition sentence. 'dlc' is for DLC-only pages whose lead never predicates the DLC of its own subject - typically 'in {{ER}} and {{SotE}}', which reads as a both-products claim and which no rule can tell from the real thing. Both win over every automatic signal.",
+  "_comment_index_link": "The index_link signal reads the links on a '... (Shadow of the Erdtree)' page as DLC content. Two kinds of link on those pages are not, and neither can be told apart by a rule. First, every index page links the base hub it is a companion to - 'Gestures (Shadow of the Erdtree)' opens by linking [[Gestures]] - so the bare category nouns below sit in 'base' for the same reason Weapons and Talismans always have. Second, a handful of individual base-game pages are listed by an index that tags nothing, so the per-entry tag rule cannot reach them; each is annotated with its reason below.",
+  "_comment_index_link_singles": {
+    "Death Rite Bird": "base-game boss (Liurnia, Caelid, Mountaintops, Consecrated Snowfield) reused as a DLC field boss, listed untagged on Bosses (Shadow of the Erdtree)",
+    "Fallingstar Beast": "base-game boss - its own lead says 'a reoccurring boss in {{ER}}' - reused as a DLC field boss",
+    "Tree Sentinel": "base-game boss (Limgrave) reused as a DLC field boss",
+    "Skeleton": "base-game enemy; Enemies (Shadow of the Erdtree) tags only its [[Skeleton#Putrescent Skeleton]] section, a DLC section of a base-game page",
+    "Larval Tear": "base-game key item - 'Larval Tears are [[Key Items]] in {{ER}}' - listed on the Key Items index, which tags nothing",
+    "Lulling Branch": "base-game tool - 'is a tool in {{ER}}' - listed in the Tools index gallery, which tags nothing",
+    "Painter Spirit": "base-game NPC; the DLC adds 3 of its 10 painting locations, so the NPCs index lists it",
+    "Stranded Souls": "base-game NPC - 'spirits of nameless characters in {{ER}} and {{ER}}: {{SotE}}', found throughout the Lands Between, dialogue table mostly base locations - listed on the NPCs index, which tags nothing. Its Stranded Souls/dialogue subpage stays in the 'dlc' list above: that page carries only the DLC's own lines (Miquella, Messmer), while the base dialogue sits in the parent's own table."
+  },
   "dlc": [
     "Rellana, Twin Moon Knight",
     "Realm of Shadow",
@@ -22,6 +33,26 @@
     "Shields",
     "Key Items",
     "Starscourge Radahn",
-    "Godslayer Incantations"
+    "Godslayer Incantations",
+
+    "Ashes",
+    "Bolstering Materials",
+    "Crafting Materials",
+    "Gestures",
+    "Info",
+    "Melee Armaments",
+    "NPCs",
+    "Ranged Weapons/Catalysts",
+    "Throwing Pots",
+    "Tools",
+
+    "Death Rite Bird",
+    "Fallingstar Beast",
+    "Larval Tear",
+    "Lulling Branch",
+    "Painter Spirit",
+    "Skeleton",
+    "Stranded Souls",
+    "Tree Sentinel"
   ]
 }
