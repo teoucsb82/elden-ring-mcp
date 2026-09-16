@@ -256,8 +256,20 @@ Tests:
 - **The classifier will be wrong on some pages at first.** Rellana proves no
   automatic signal is complete. The coverage report and the override file are
   the mechanism for converging on correctness, not a promise of day-one
-  accuracy. The spec deliberately does not claim an accuracy figure, because
-  nothing here has measured one.
+  accuracy.
+- **Measured coverage (2026-09-15):** the classifier labels 857 of 4,922 pages
+  as DLC, by signal: sote_template=839, title_suffix=22, category=0,
+  hub_page=11, override=1 (a page can carry more than one signal, so these do
+  not sum to 857). 8 base-game pages are flagged `has_dlc_sections`. Accuracy
+  on the spot-check set in `test/dlc-coverage.test.ts` (four known-hub pages,
+  four known-DLC pages, three known-base pages) is 100%; accuracy across the
+  full snapshot is unmeasured. `category=0` because `dlc_categories` is empty
+  in the local database — it has not been synced since the category crawl was
+  added, so the category signal has never fired on real data, only in
+  synthetic unit tests. Eight hub-like pages remain ambiguous (Armor Sets,
+  Ashes of War, Bosses, Key Items, Incantations, Shields, Talismans, Weapons);
+  the override file is the mechanism for correcting what the report surfaces
+  as ambiguous.
 - **Page-level only.** A base-game page that discusses DLC events returns that
   text in base mode. `has_dlc_sections` flags it; nothing strips it.
 - **Hub detection is a heuristic.** The override file's `base` list is the
