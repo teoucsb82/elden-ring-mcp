@@ -371,6 +371,30 @@ test('resolveName defaults to base mode', () => {
   assert.ok(r && isDlcFiltered(r));
 });
 
+// "Knight Arm" in base mode gated on Death Knight Gauntlets (dlc) while 39 base pages matched.
+// Vagabond's wikitext carries extra filler so its section is longer than Death's: FTS5's bm25 length
+// normalization then ranks Death first unfiltered, proven by the raw top hit in the task report.
+test('the search fallback prefers a page the mode permits', () => {
+  const dbs = fixtureDbs([
+    { title: 'Death Knight Gauntlets', wikitext: 'Death Knight Gauntlets knight gauntlets knight gauntlets', dlc: 1 },
+    { title: 'Vagabond Knight Gauntlets', wikitext: 'knight gauntlets are a plain reused vagabond set piece with no unique lore or special detail worth noting here at all', dlc: 0 },
+  ]);
+  const base = resolveName(dbs, 'knight gauntlet', 'base');
+  assert.ok(base && !('filtered' in base));
+  assert.equal(base.provenance.title, 'Vagabond Knight Gauntlets');
+  assert.equal(base.match, 'search');
+  const only = resolveName(dbs, 'knight gauntlet', 'only');
+  assert.ok(only && !('filtered' in only));
+  assert.equal(only.provenance.title, 'Death Knight Gauntlets');
+});
+
+test('the search fallback still gates when nothing the mode permits matches', () => {
+  const dbs = fixtureDbs([{ title: 'Death Knight Gauntlets', wikitext: 'knight gauntlets', dlc: 1 }]);
+  const r = resolveName(dbs, 'knight gauntlet', 'base');
+  assert.ok(r && 'filtered' in r);
+  assert.equal(r.match, 'search');
+});
+
 test('whereIs on a dlc item in base mode explains the filter', () => {
   const dbs = fixtureDbs([{ title: 'Verdigris Armor', wikitext: 'armor', dlc: 1 }]);
   const result = whereIs(dbs, 'Verdigris Armor', 'base') as { not_found: true; reason: string; page: string; hint: string };
