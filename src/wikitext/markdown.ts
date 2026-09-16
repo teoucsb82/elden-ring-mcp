@@ -18,6 +18,35 @@ export function stripTemplates(text: string): string {
   return out;
 }
 
+/**
+ * Fandom spells the products through templates rather than writing them out, so stripTemplates
+ * deleted the name itself: "is an Arrow in {{ER}}." became "is an Arrow in ." and a lead opening
+ * with '''{{PAGENAME}}''' became "****". Keys are the template name lowercased with all whitespace
+ * removed, so "{{ in | se }}" and "{{IN|SE}}" both resolve.
+ */
+const PRODUCT_NAMES: Record<string, string> = {
+  er: 'Elden Ring',
+  sote: 'Shadow of the Erdtree',
+  ern: 'Elden Ring Nightreign',
+  'in|er': 'in Elden Ring',
+  'in|se': 'in Shadow of the Erdtree',
+  'in|sote': 'in Shadow of the Erdtree',
+  'in|ern': 'in Elden Ring Nightreign',
+};
+
+/**
+ * Replaces only the product-name templates and {{PAGENAME}} with their text. Deliberately anchored
+ * on the whole {{...}} so it cannot reach inside {{Infobox ...}}, {{quote}} or any other template
+ * that still has to be stripped whole.
+ */
+function substituteProductNames(text: string, title: string): string {
+  return text.replace(/\{\{\s*(PAGENAME|ERN?|SotE|in\s*\|\s*(?:er|se|sote|ern))\s*\}\}/gi, (match, name: string) => {
+    const key = name.toLowerCase().replace(/\s+/g, '');
+    if (key === 'pagename') return title;
+    return PRODUCT_NAMES[key] ?? match;
+  });
+}
+
 /** Removes {| ... |} tables line by line (nesting-aware). */
 function stripTables(text: string): string {
   let depth = 0;
@@ -40,12 +69,13 @@ export function convertInline(text: string): string {
     .replace(/'''(.*?)'''/g, '**$1**')
     .replace(/''(.*?)''/g, '*$1*')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/?(?:small|span|div|center|big|sup|sub|u|s|nowiki|p)\b[^>]*>/gi, '')
+    .replace(/<\/?(?:small|span|div|center|big|sup|sub|u|s|i|b|nowiki|p)\b[^>]*>/gi, '')
     .replace(/&nbsp;/g, ' ');
 }
 
-export function wikitextToMarkdown(wikitext: string): string {
-  let text = wikitext.replace(/<!--[\s\S]*?-->/g, '');
+/** `title` fills {{PAGENAME}}; callers without one get the empty string, as MediaWiki would. */
+export function wikitextToMarkdown(wikitext: string, title = ''): string {
+  let text = substituteProductNames(wikitext.replace(/<!--[\s\S]*?-->/g, ''), title);
   text = text.replace(/<ref[^>]*\/>/gi, '').replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, '');
   text = text.replace(/<gallery[\s\S]*?<\/gallery>/gi, '');
   // The opening tag carries no content, but the closing tag ends the tabbed region: prose after it

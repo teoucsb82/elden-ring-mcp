@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { memoryDb } from './helpers.js';
 import { DERIVED_TABLES, openDb } from '../src/db/open.js';
+import { rerenderSections, upsertPage } from '../src/store/pages.js';
 
 test('schema creates all tables', () => {
   const db = memoryDb();
@@ -61,4 +62,16 @@ test('a pre-dlc database gains the columns on open', () => {
   assert.equal((db.prepare('SELECT dlc FROM pages WHERE title = ?').get('Old') as { dlc: number }).dlc, 0);
   db.close();
   rmSync(dir, { recursive: true, force: true });
+});
+
+// Sections are only built at upsert time, so a renderer fix never reaches an existing snapshot.
+// `npm run extract` re-renders them from the stored wikitext before the extractors read them.
+test('rerenderSections rebuilds sections from stored wikitext', () => {
+  const db = memoryDb();
+  const id = upsertPage(db, { source: 'fandom', title: 'Arrow', url: 'u', revid: 1, fetchedAt: 'now', wikitext: "'''{{PAGENAME}}''' is an arrow in {{ER}}.", markdown: null, license: 'l' });
+  db.prepare("UPDATE sections SET markdown = 'stale' WHERE page_id = ?").run(id);
+  assert.equal(rerenderSections(db), 1);
+  const row = db.prepare('SELECT markdown FROM sections WHERE page_id = ? ORDER BY ord').get(id) as { markdown: string };
+  assert.equal(row.markdown, '**Arrow** is an arrow in Elden Ring.');
+  assert.equal((db.prepare("SELECT count(*) AS n FROM sections_fts WHERE sections_fts MATCH 'stale'").get() as { n: number }).n, 0);
 });

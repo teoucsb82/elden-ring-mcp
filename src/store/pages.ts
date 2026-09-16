@@ -14,8 +14,34 @@ export function clearDerived(db: Db, pageId: number): void {
   for (const table of DERIVED_TABLES) db.prepare(`DELETE FROM ${table} WHERE page_id = ?`).run(pageId);
 }
 
+/** Replaces a page's sections and their fts rows. Callers own the transaction. */
+function writeSections(db: Db, pageId: number, title: string, markdown: string): void {
+  clearSections(db, pageId);
+  const insertSection = db.prepare('INSERT INTO sections (page_id, ord, heading, markdown) VALUES (?, ?, ?, ?)');
+  const insertFts = db.prepare('INSERT INTO sections_fts (rowid, title, heading, markdown) VALUES (?, ?, ?, ?)');
+  for (const section of splitSections(markdown)) {
+    const { lastInsertRowid } = insertSection.run(pageId, section.ord, section.heading, section.markdown);
+    insertFts.run(lastInsertRowid, title, section.heading, section.markdown);
+  }
+}
+
+/**
+ * Rebuilds every Fandom page's sections from its stored wikitext, so a change to the renderer
+ * reaches an existing snapshot without a re-sync. Fextralife rows keep `wikitext` null and their
+ * markdown is not persisted anywhere else, so they cannot be rebuilt and are skipped.
+ * Returns the number of pages re-rendered.
+ */
+export function rerenderSections(db: Db): number {
+  const rows = db.prepare("SELECT id, title, wikitext FROM pages WHERE source = 'fandom' AND wikitext IS NOT NULL")
+    .all() as { id: number; title: string; wikitext: string }[];
+  return db.transaction(() => {
+    for (const row of rows) writeSections(db, row.id, row.title, wikitextToMarkdown(row.wikitext, row.title));
+    return rows.length;
+  })();
+}
+
 export function upsertPage(db: Db, page: RawPage): number {
-  const markdown = page.markdown ?? wikitextToMarkdown(page.wikitext ?? '');
+  const markdown = page.markdown ?? wikitextToMarkdown(page.wikitext ?? '', page.title);
   return db.transaction(() => {
     db.prepare(`
       INSERT INTO pages (source, title, url, revid, fetched_at, license, wikitext)
@@ -25,13 +51,7 @@ export function upsertPage(db: Db, page: RawPage): number {
         license = excluded.license, wikitext = excluded.wikitext
     `).run({ source: page.source, title: page.title, url: page.url, revid: page.revid, fetchedAt: page.fetchedAt, license: page.license, wikitext: page.wikitext });
     const { id } = db.prepare('SELECT id FROM pages WHERE source = ? AND title = ?').get(page.source, page.title) as { id: number };
-    clearSections(db, id);
-    const insertSection = db.prepare('INSERT INTO sections (page_id, ord, heading, markdown) VALUES (?, ?, ?, ?)');
-    const insertFts = db.prepare('INSERT INTO sections_fts (rowid, title, heading, markdown) VALUES (?, ?, ?, ?)');
-    for (const section of splitSections(markdown)) {
-      const { lastInsertRowid } = insertSection.run(id, section.ord, section.heading, section.markdown);
-      insertFts.run(lastInsertRowid, page.title, section.heading, section.markdown);
-    }
+    writeSections(db, id, page.title, markdown);
     return id;
   })();
 }
