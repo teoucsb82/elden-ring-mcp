@@ -127,3 +127,12 @@ Found just outside the shack.
   assert.deepEqual(sections.map((s) => s.heading), ["Artist's Shack"]);
   assert.equal(sections[0].markdown, 'Found just outside the shack.');
 });
+
+// Fandom writes the game's name through templates ({{ER}}, {{SotE}}, {{in|se}}) and a page's own
+// name through {{PAGENAME}}. stripTemplates deleted all of them, so thousands of sections read
+// "... is an Arrow in ." and leads started with "**** is". They have to render as plain text.
+test('product-name templates render as text instead of vanishing', () => {
+  assert.equal(wikitextToMarkdown("'''{{PAGENAME}}''' is an [[Arrow]] in {{ER}}.", 'Arrow'), '**Arrow** is an Arrow in Elden Ring.');
+  assert.equal(wikitextToMarkdown("'''Milady''' is a sword {{in|se}}. Also in {{ER}}<i>:</i> {{SotE}}."), '**Milady** is a sword in Shadow of the Erdtree. Also in Elden Ring: Shadow of the Erdtree.');
+  assert.equal(wikitextToMarkdown('{{Infobox Weapon\n| type = Axe\n}}\nText {{ERN}}.'), 'Text Elden Ring Nightreign.');
+});
