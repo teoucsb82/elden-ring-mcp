@@ -48,7 +48,7 @@ Four candidate signals, each measured against the live wiki and the shipped DB:
 
 | Signal | Coverage | Fails on |
 |---|---|---|
-| `{{SotE}}` template in wikitext | 847 pages | Misses Rellana. Matches the `Weapons` and `Armor Sets` hub pages, which are base-game pages that merely list DLC items |
+| `{{SotE}}` template in wikitext | 847 pages, of which 599 are page markers | Misses Rellana. The other 248 are inline link markers and DLC mentions on base-game pages — `Weapons` and `Armor Sets`, but also `Flask of Crimson Tears` and 33 Ash of War pages (see §2 signal 3) |
 | `Category:Shadow of the Erdtree Locations` | 64 pages | Locations only |
 | Title suffix `(Shadow of the Erdtree)` | 22 pages | Index pages only |
 | Links from the DLC index pages | ~0 useful | `Armor (Shadow of the Erdtree)` is a gallery of `File:` links, tagged `{{missing data|names, categories, stats}}` |
@@ -87,8 +87,13 @@ CREATE TABLE IF NOT EXISTS dlc_report (
   `["sote_template","location_category"]`. Every classification is auditable
   without re-running the classifier.
 - `has_dlc_sections` — 1 if a base page contains DLC-referencing text. Set on
-  hub pages and on lore pages such as `Great Runes`, whose text describes
-  Miquella breaking his rune in the Land of Shadow.
+  hub pages, and on any base-game page whose wikitext carries a `{{SotE}}`
+  marker the classifier read as a reference rather than a claim about the page's
+  own subject: `Flask of Crimson Tears`, `Arcane`, `Ash of War: Quickstep`, and
+  244 others (247 counting the hub pages). It is *not* set on pages that discuss DLC events in prose without
+  the template — `Great Runes` describes Miquella breaking his rune in the Land
+  of Shadow but uses no `{{SotE}}`, so it stays 0. The flag tracks the marker,
+  not the subject matter; nothing detects the latter.
 
 The unused `patch` column is left alone. Reusing it would conflate "which game
 patch" with "which product", and it is already load-bearing in nothing.
@@ -119,8 +124,25 @@ Signals evaluated in precedence order. First match wins.
    Forces `dlc = 0`, and sets `has_dlc_sections = 1` when `{{SotE}}` is present.
    This is what stops `Weapons` and `Armor Sets` from being swept in.
 
-3. **`{{SotE}}` template** — present anywhere in the wikitext. The workhorse,
-   847 pages.
+3. **`{{SotE}}` template** — present in the wikitext *as a page marker*. The
+   workhorse. `{{SotE}}` is more often an inline LINK marker than a page marker:
+   the wiki writes `[[Deflecting Hardtear]] {{SotE}}` inside base-game lists to
+   tag the linked thing. Three exclusions separate "this page IS DLC" from "this
+   page MENTIONS DLC", each measured against the snapshot's 847 pages carrying
+   the template:
+   - an occurrence preceded by `]]` or `<br>` tags that link — 167 pages;
+   - an occurrence below the lead is a note about the DLC, e.g. "all bosses in
+     `{{SotE}}` are resistant to percentage damage" — 40 pages;
+   - a lead naming both products, "in `{{ER}}` and `{{SotE}}`" or "in `{{ER}}`,
+     `{{SotE}}`, and `{{ERN}}`", says the subject ships with the base game —
+     41 pages.
+
+   What remains is 599 pages. A genuine DLC page states its subject in the lead
+   and names one product: "in `{{ER}}`: `{{SotE}}`", "in `{{ER}}`, included in
+   the `{{SotE}}` DLC", or "in `{{SotE}}`".
+
+   An excluded page is base game *and* carries `has_dlc_sections`. The text is
+   never withheld; the answer is caveated.
 
 4. **Title suffix** — title ends with `(Shadow of the Erdtree)`.
 
@@ -167,8 +189,18 @@ in its existing WHERE clause.
 regardless of mode, then compares the result to the mode:
 
 - resolved, and the mode permits it → normal result
-- resolved, but the mode excludes it → `{ notFound: true, reason: 'dlc_filtered', title, dlc: true }`
+- resolved, but the mode excludes it → `{ notFound: true, reason: 'dlc_filtered', title, match, dlc: true }`
 - not resolved at all → `{ notFound: true }` as today
+- never classified (a cached Fextralife page, which has no wikitext for the
+  classifier to read) → normal result in every mode, with no `dlc` field.
+  "Unknown" is not "base game", and no mode filters an unknown out.
+
+`match` rides along on the gated shape because the gate is only as good as the
+resolution behind it. `resolveName` falls back to full-text search, so
+`item_stats {name: "Verdigris Greatsword"}` — not a page — lands on `Enir-Ilim`,
+which *is* DLC. Without `match` the caller cannot tell "your page is DLC" from "a
+guess is DLC", and re-running with `dlc: 'all'` returns a page about something
+else. On a `match: 'search'` gate the hint says so in words.
 
 This is what makes "Verdigris Armor is Shadow of the Erdtree content; re-run
 with `dlc: 'all'`" possible, and it is why the filter is applied at the query
@@ -186,10 +218,11 @@ dlc: z.enum(['base','all','only']).optional().default('base')
 
 Result shape, alongside the existing provenance block:
 
-- `dlc: true | false` on every result
+- `dlc: true | false` on every result from a classified page; **absent** on a
+  cached Fextralife page, whose DLC status nobody measured
 - `has_dlc_sections: true` when set, so an answer can note that a base-game page
   discusses DLC events
-- `reason: 'dlc_filtered'` on the gated not-found
+- `reason: 'dlc_filtered'` plus `match` on the gated not-found
 
 `sources_status` reports base and DLC page counts plus the last classifier run's
 signal breakdown from `dlc_report`.
@@ -230,8 +263,12 @@ Tests:
 - Migration test: a database created without the new columns opens and
   classifies.
 - End-to-end through `scripts/smoke-mcp.ts`.
-- Coverage assertion on the full shipped DB: the classifier labels at least 800
-  pages as DLC, and labels zero known hub pages as DLC.
+- Coverage assertions on the full shipped DB. The bound is two-sided: a floor
+  alone can only catch under-labelling, and over-labelling is what the
+  classifier actually did. It also pins zero known hub pages as DLC, the
+  former false positives at `dlc = 0`, `has_dlc_sections` in the hundreds, and
+  `where_is` answering normally for `Flask of Crimson Tears` while still gating
+  `Verdigris Armor`.
 
 ## Files touched
 
@@ -257,19 +294,36 @@ Tests:
   automatic signal is complete. The coverage report and the override file are
   the mechanism for converging on correctness, not a promise of day-one
   accuracy.
-- **Measured coverage (2026-09-15):** the classifier labels 857 of 4,922 pages
-  as DLC, by signal: sote_template=839, title_suffix=22, category=0,
-  hub_page=11, override=1 (a page can carry more than one signal, so these do
-  not sum to 857). 8 base-game pages are flagged `has_dlc_sections`. Accuracy
-  on the spot-check set in `test/dlc-coverage.test.ts` (four known-hub pages,
-  four known-DLC pages, three known-base pages) is 100%; accuracy across the
-  full snapshot is unmeasured. `category=0` because `dlc_categories` is empty
-  in the local database — it has not been synced since the category crawl was
-  added, so the category signal has never fired on real data, only in
-  synthetic unit tests. Eight hub-like pages remain ambiguous (Armor Sets,
-  Ashes of War, Bosses, Key Items, Incantations, Shields, Talismans, Weapons);
-  the override file is the mechanism for correcting what the report surfaces
-  as ambiguous.
+- **Measured coverage (2026-09-16):** the classifier labels 618 of 4,922 pages
+  as DLC, by signal: sote_template=598, title_suffix=22, category=0,
+  hub_page=12, override=1 (a page can carry more than one signal, so these do
+  not sum to 618). 247 base-game pages are flagged `has_dlc_sections`. These
+  replace the 2026-09-15 figures (857 DLC, 8 flagged), which counted the
+  inline-link-marker false positives described in §2 signal 3.
+  `category=0` because `dlc_categories` is empty in the local database — it has
+  not been synced since the category crawl was added, so the category signal has
+  never fired on real data, only in synthetic unit tests.
+- **Measured false negatives: 167 pages.** The wiki marks the DLC three ways and
+  the classifier reads one of them. 81 base-labelled pages carry `{{in|SotE}}`
+  or `{{in|se}}` — the same marker template under a different invocation — and
+  87 carry a plain `[[Elden Ring: Shadow of the Erdtree]]` link instead of any
+  template; 167 pages match one or the other. Every one of them is DLC content
+  that base mode now serves and labels `dlc: false`: `Milady`, `Backhand Blade`,
+  `Great Katana`, `Midra, Lord of Frenzied Flame`, `Putrescent Knight`,
+  `Needle Knight Leda`, `Bloodfiend's Fork`, `Black Steel Twinblade`. This is
+  pre-existing — no signal ever read those forms — and unaddressed. Adding
+  `{{in|SotE}}` as a fourth exclusion-aware spelling of signal 3 is the obvious
+  next step; the plain-link form is a genuinely new signal and needs its own
+  measurement.
+- **Accuracy is spot-checked, not measured.** `test/dlc-coverage.test.ts` pins
+  four known-hub pages, six known-DLC pages, three known-base pages and fifteen
+  former false positives against the shipped snapshot, plus a two-sided bound on
+  the DLC count. Accuracy across all 4,922 pages is unmeasured.
+- **The `base` override list carries two different corrections.** It began as
+  hub-page exclusion and now also holds `Starscourge Radahn`, a base-game boss
+  whose lead says he appears in both products in a shape no rule reads safely.
+  Both emit the signal name `hub_page`, so `dlc_signals` on Radahn is imprecise
+  about *why* he was forced base.
 - **Page-level only.** A base-game page that discusses DLC events returns that
   text in base mode. `has_dlc_sections` flags it; nothing strips it.
 - **Hub detection is a heuristic.** The override file's `base` list is the
