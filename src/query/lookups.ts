@@ -312,6 +312,8 @@ export function sourcesStatus(dbs: Dbs) {
           base_pages: count(dbs.shipped, 'SELECT count(*) AS n FROM pages WHERE dlc = 0'),
           dlc_pages: count(dbs.shipped, 'SELECT count(*) AS n FROM pages WHERE dlc = 1'),
           dlc_signals: dbs.shipped.prepare('SELECT signal, hits, at FROM dlc_report ORDER BY signal').all(),
+          // Zero here explains a zero on the category signal above: the crawl never ran on this snapshot.
+          dlc_categories: count(dbs.shipped, 'SELECT count(*) AS n FROM dlc_categories'),
           failures: count(dbs.shipped, 'SELECT count(*) AS n FROM extract_failures'),
         }
       : null,

@@ -8,6 +8,7 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "sync": "tsx scripts/sync.ts",
+    "sync-categories": "tsx scripts/sync-categories.ts",
     "extract": "tsx scripts/extract.ts",
     "build": "tsx scripts/build.ts",
     "fetch-data": "tsx scripts/fetch-data.ts",
