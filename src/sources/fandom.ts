@@ -80,6 +80,32 @@ export function createFandom(opts: FandomOptions = {}) {
       }
       return pages;
     },
+
+    /**
+     * Breadth-first over Category:Shadow of the Erdtree and its subcategories. Fandom's category graph
+     * contains cycles (a subcategory lists its parent), so visited titles are tracked. Bounded: ~27
+     * top-level members and three subcategories, not a second full sync.
+     */
+    async listDlcCategoryTitles(): Promise<string[]> {
+      const ROOT = 'Category:Shadow of the Erdtree';
+      const seen = new Set<string>([ROOT]);
+      const queue = [ROOT];
+      const titles: string[] = [];
+
+      while (queue.length) {
+        const category = queue.shift() as string;
+        for await (const json of paged({ action: 'query', list: 'categorymembers', cmtitle: category, cmlimit: '500' })) {
+          for (const member of json.query?.categorymembers ?? []) {
+            if (member.ns === 14) {
+              if (!seen.has(member.title)) { seen.add(member.title); queue.push(member.title); }
+            } else if (member.ns === 0) {
+              titles.push(member.title);
+            }
+          }
+        }
+      }
+      return [...new Set(titles)];
+    },
   };
 }
 

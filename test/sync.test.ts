@@ -17,6 +17,7 @@ function fakeFandom(wiki: Map<string, { revid: number; text: string }>) {
     async *listRevisions() { for (const [title, p] of wiki) yield { title, revid: p.revid }; },
     async *listRedirects() { yield { from: 'Azur Staff', to: "Azur's Glintstone Staff", fragment: null }; },
     async fetchPages(titles: string[]) { fetched.push(...titles); return titles.map((t) => page(t, wiki.get(t)!.revid, wiki.get(t)!.text)); },
+    listDlcCategoryTitles: async () => [],
   };
 }
 
@@ -64,4 +65,20 @@ test('sync fetches new and changed pages only, removes vanished, stores redirect
   assert.deepEqual([...storedRevids(db, 'fandom')], [['Graven-School Talisman', 6]]);
   assert.deepEqual(db.prepare('SELECT from_title, to_title FROM redirects').all(), [{ from_title: 'Azur Staff', to_title: "Azur's Glintstone Staff" }]);
   assert.equal((db.prepare("SELECT pages FROM sync_state WHERE source='fandom'").get() as { pages: number }).pages, 1);
+});
+
+test('syncFandom stores dlc category titles', async () => {
+  const db = memoryDb();
+  const fandom = {
+    listRevisions: async function* () { yield { title: 'Scadu Altus', revid: 1 }; },
+    listRedirects: async function* () {},
+    fetchPages: async (titles: string[]): Promise<RawPage[]> => titles.map((title) => ({
+      source: 'fandom', title, url: `https://x/${title}`, revid: 1,
+      fetchedAt: 'now', wikitext: 'A region.', markdown: null, license: 'CC BY-SA 3.0',
+    })),
+    listDlcCategoryTitles: async () => ['Scadu Altus'],
+  };
+  await syncFandom(db, fandom);
+  const stored = db.prepare('SELECT title FROM dlc_categories').all() as { title: string }[];
+  assert.deepEqual(stored, [{ title: 'Scadu Altus' }]);
 });

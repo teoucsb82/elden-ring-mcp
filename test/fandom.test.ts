@@ -151,3 +151,28 @@ test('http honors a date-valued Retry-After', async () => {
   assert.equal(await get('https://x'), 'ok');
   assert.ok(sleeps.some((ms) => ms > 3000 && ms <= 5000), `expected a ~5s sleep, got ${sleeps.join(',')}`);
 });
+
+test('listDlcCategoryTitles walks subcategories once each', async () => {
+  const responses: Record<string, unknown> = {
+    'Category:Shadow of the Erdtree': { query: { categorymembers: [
+      { title: 'Weapons (Shadow of the Erdtree)', ns: 0 },
+      { title: 'Category:Shadow of the Erdtree Locations', ns: 14 },
+    ] } },
+    'Category:Shadow of the Erdtree Locations': { query: { categorymembers: [
+      { title: 'Scadu Altus', ns: 0 },
+      { title: 'Category:Shadow of the Erdtree', ns: 14 },
+    ] } },
+  };
+  const calls: string[] = [];
+  const fetchImpl = async (url: string) => {
+    const cmtitle = decodeURIComponent(new URL(url).searchParams.get('cmtitle') ?? '');
+    calls.push(cmtitle);
+    return { ok: true, status: 200, text: async () => JSON.stringify(responses[cmtitle] ?? { query: { categorymembers: [] } }) } as Response;
+  };
+
+  const fandom = createFandom({ fetchImpl, sleep: async () => {}, minIntervalMs: 0 });
+  const titles = await fandom.listDlcCategoryTitles();
+
+  assert.deepEqual(titles.sort(), ['Scadu Altus', 'Weapons (Shadow of the Erdtree)']);
+  assert.equal(calls.filter((c) => c === 'Category:Shadow of the Erdtree').length, 1, 'must not revisit a category');
+});

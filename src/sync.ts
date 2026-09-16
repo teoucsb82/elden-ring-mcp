@@ -1,6 +1,6 @@
 import type { Db } from './db/open.js';
 import type { Fandom } from './sources/fandom.js';
-import { deletePage, recordSync, replaceRedirects, storedRevids, upsertPage } from './store/pages.js';
+import { deletePage, recordSync, replaceDlcCategories, replaceRedirects, storedRevids, upsertPage } from './store/pages.js';
 
 export interface SyncReport {
   added: string[];
@@ -12,7 +12,7 @@ export interface SyncReport {
 /** Brings the db in line with Fandom: fetches only new/changed revisions, drops deleted pages, refreshes redirects. */
 export async function syncFandom(
   db: Db,
-  fandom: Pick<Fandom, 'listRevisions' | 'listRedirects' | 'fetchPages'>,
+  fandom: Pick<Fandom, 'listRevisions' | 'listRedirects' | 'fetchPages' | 'listDlcCategoryTitles'>,
   log: (message: string) => void = () => {},
 ): Promise<SyncReport> {
   const stored = storedRevids(db, 'fandom');
@@ -44,6 +44,10 @@ export async function syncFandom(
   for await (const redirect of fandom.listRedirects()) redirects.push(redirect);
   replaceRedirects(db, 'fandom', redirects);
   log(`redirects: ${redirects.length}`);
+
+  const dlcTitles = await fandom.listDlcCategoryTitles();
+  replaceDlcCategories(db, dlcTitles);
+  log(`dlc category titles: ${dlcTitles.length}`);
 
   recordSync(db, 'fandom', seen.size);
   return { added, changed, removed, unchanged };

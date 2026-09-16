@@ -59,6 +59,15 @@ export function replaceRedirects(db: Db, source: SourceId, rows: { from: string;
   })();
 }
 
+/** Replaces the DLC category membership captured from the wiki. */
+export function replaceDlcCategories(db: Db, titles: string[]): void {
+  db.transaction(() => {
+    db.prepare('DELETE FROM dlc_categories').run();
+    const insert = db.prepare('INSERT OR IGNORE INTO dlc_categories (title) VALUES (?)');
+    for (const title of titles) insert.run(title);
+  })();
+}
+
 export function recordSync(db: Db, source: SourceId, pages: number, at = new Date()): void {
   db.prepare('INSERT INTO sync_state (source, last_run, pages) VALUES (?, ?, ?) ON CONFLICT (source) DO UPDATE SET last_run = excluded.last_run, pages = excluded.pages')
     .run(source, at.toISOString(), pages);
