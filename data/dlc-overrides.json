@@ -1,5 +1,5 @@
 {
-  "_comment": "Human corrections to the DLC classifier. 'dlc' forces a page to DLC; 'base' forces it to base game. 'base' is for index/hub pages that list DLC items without being DLC content. Both win over every automatic signal.",
+  "_comment": "Human corrections to the DLC classifier. 'dlc' forces a page to DLC; 'base' forces it to base game. 'base' is for index/hub pages that list DLC items, and for base-game pages the wiki's own markers mislabel. Both win over every automatic signal.",
   "dlc": [
     "Rellana, Twin Moon Knight"
   ],
@@ -14,6 +14,7 @@
     "Bosses",
     "Ashes of War",
     "Shields",
-    "Key Items"
+    "Key Items",
+    "Starscourge Radahn"
   ]
 }

@@ -49,6 +49,77 @@ test('a hub page that lists dlc items stays base and is flagged', () => {
   assert.equal(result.hasDlcSections, true);
 });
 
+// The wiki writes `[[Deflecting Hardtear]] {{SotE}}` to tag the LINKED thing. Reading that as a page
+// marker labelled 167 base-game pages DLC on the shipped snapshot — Flask of Crimson Tears, 33 Ash of
+// War pages — and base mode then told a caller its own base-game items were DLC-gated.
+// The marker sits in the LEAD here on purpose, so only the inline rule can exclude it.
+test('an inline link marker tags the link, not the page it sits on', () => {
+  const wikitext = "The '''Flask of Crimson Tears''' is a [[Key Item]], boosted by [[Crimson Seed Talisman]] {{SOTE}} (+20%).\n\n==Notes==\nNothing.";
+  const result = classifyPage(page('Flask of Crimson Tears', wikitext), ctx());
+  assert.equal(result.dlc, false);
+  assert.deepEqual(result.signals, []);
+  // The text still mentions the DLC, and an answer is allowed to say so.
+  assert.equal(result.hasDlcSections, true);
+});
+
+test('an inline marker after a line break tags the link, not the page', () => {
+  const result = classifyPage(page('Ammunition', "'''Ammunition''' is a category.<br>\n{{SotE}}"), ctx());
+  assert.equal(result.dlc, false);
+  assert.equal(result.hasDlcSections, true);
+});
+
+// A mention below the lead is a note about the DLC ("all bosses in {{SotE}} resist…"), not a claim
+// about what this page's subject is.
+test('a mention below the lead does not make the page dlc', () => {
+  const wikitext = "'''Black Flame Blade''' is an [[Incantation]] in {{ER}}.\n\n==Notes==\n* All bosses in {{SotE}} are resistant to percentage damage.";
+  const result = classifyPage(page('Black Flame Blade', wikitext), ctx());
+  assert.equal(result.dlc, false);
+  assert.equal(result.hasDlcSections, true);
+});
+
+// "in {{ER}} and {{SotE}}" names both products, so the subject ships with the base game.
+test('a lead naming both products stays base game', () => {
+  const both = classifyPage(page('Bell Bearings', "'''Bell Bearings''' are [[Key Item]]s in {{ER}} and {{SotE}}."), ctx());
+  assert.equal(both.dlc, false);
+  assert.equal(both.hasDlcSections, true);
+
+  const listed = classifyPage(page('Statues', "This page lists '''Statues''' in {{ER}}, {{SotE}}, and {{ERN}}."), ctx());
+  assert.equal(listed.dlc, false);
+});
+
+// The three exclusions above must not touch how a real DLC page states its own subject. These are the
+// four lead forms the shipped snapshot actually uses.
+test('the lead forms real dlc pages use still classify as dlc', () => {
+  const leads: [string, string][] = [
+    ['Verdigris Armor', "The '''{{PAGENAME}}''' is [[Chest Armor]] in {{ER}}<i>:</i> {{SotE}}.\n\n==Description=="],
+    ['Rakshasa Armor', "The '''{{PAGENAME}}''' is [[Chest Armor]] in {{ER}}, included in the {{SotE}} DLC.\n\n==Description=="],
+    ['Messmer the Impaler', "'''Messmer''' is a mandatory [[bosses|boss]] in {{SotE}}.\n\n==Overview=="],
+    ['Scadu Altus', "'''Scadu Altus''' is a [[subregion]] of the [[Realm of Shadow]] in {{SotE}}.\n\n==Overview=="],
+  ];
+  for (const [title, wikitext] of leads) {
+    const result = classifyPage(page(title, wikitext), ctx());
+    assert.equal(result.dlc, true, `${title} must stay dlc`);
+    assert.deepEqual(result.signals, ['sote_template'], `${title} must fire sote_template`);
+    assert.equal(result.hasDlcSections, false, `${title} is dlc, not a base page mentioning dlc`);
+  }
+});
+
+// has_dlc_sections existed but only the override branch could ever set it, which made it a restatement
+// of the override file. With the inline and below-lead rules it means what the spec says: a base-game
+// page whose text discusses the DLC.
+test('a base page keeps has_dlc_sections without any override', () => {
+  const result = classifyPage(page('Arcane', "'''Arcane''' is a [[stat]].\n*[[Circlet of Light]]{{SOTE}}: increases Arcane.\n\n==Notes=="), ctx());
+  assert.equal(result.dlc, false);
+  assert.deepEqual(result.signals, []);
+  assert.equal(result.hasDlcSections, true);
+});
+
+test('the committed overrides force Starscourge Radahn back to base game', () => {
+  // Radahn's lead says he is a boss "in {{ER}} and ... in {{ER}}: {{SotE}}" — a shape no rule reads
+  // safely, which is exactly what the override file is for.
+  assert.ok(loadOverrides().base.includes('Starscourge Radahn'));
+});
+
 test('an override forces dlc where no signal fires', () => {
   const result = classifyPage(page('Rellana, Twin Moon Knight', 'A boss.'), ctx({ dlc: ['Rellana, Twin Moon Knight'], base: [] }));
   assert.equal(result.dlc, true);
