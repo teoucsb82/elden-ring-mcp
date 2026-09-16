@@ -83,3 +83,38 @@ All five `ok` with provenance:
 5. `where_is` Graven-School Talisman → "large pile of crystals in **Raya Lucaria** Academy".
 
 72 tests and both smoke runs (fixture db and real db) pass.
+
+## 2026-09-15 — review rounds after the first build
+
+Two more passes ran after the build: a fix round on the build's own findings, and a whole-branch
+review. Between them they found four defects that all had the same shape — **an answer that looks
+fine and says nothing, or says something false with confidence.** Worth recording, because the
+fixture suite was green through every one of them.
+
+- **`get_page` returned zero sections for any page with no explicit section argument.** A shared
+  helper took a precomputed section list, and the caller precomputed `[]` on the no-fragment path,
+  so the whole-page fallback never ran. The suite missed it because the test named "getPage whole
+  and single section" never tested the whole-page case. The helper now derives the list itself, so
+  no caller can hand it a misleading value, and both branches are pinned by tests.
+- **`max_req` filtering asserted unknown data as free.** `coalesce(str_req, 0) <= 0` made the five
+  weapons with unparsed requirements answer as usable at zero strength. Unknown requirements are
+  now excluded rather than treated as zero.
+- **The Fextralife rate limit did not exist across calls.** A new HTTP client was built per fetch,
+  so its 1 req/s floor reset every time; consecutive `fetch: true` calls were unthrottled. That
+  limit is the anti-bulk-crawl guard, so it is now one shared client, with the slot reserved before
+  awaiting, plus a per-session cap on fetches.
+- **`not_found` lied about which thing was missing.** A page that exists with a section that does
+  not now returns `section_not_found` with the page's real headings, so a model can retry instead
+  of reporting the item does not exist. Pages that resolve but yield no readable sections say so
+  too, rather than answering with provenance and nothing else.
+
+Also: zero-match `search` and `item_stats` now return `not_found` instead of an empty object;
+contradictory `item_stats` filters are rejected instead of silently ignored; and the `<tabber>`
+sentinel is a printable token, not NUL bytes (which had made `markdown.ts` binary to git).
+
+Known and deliberately left: `bossInfo`/`whereIs` can still return provenance with little to read
+when the typed row is null and no section matches; there is still no `npm run reindex`; the build
+summary's `rows` counts pages matched, not rows written; quest-step accuracy is spot-checked on
+4 of 68 NPCs.
+
+96 tests. Fixture smoke and real-db acceptance smoke both pass.
