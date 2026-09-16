@@ -16,3 +16,20 @@ export function openDbs(): Dbs {
     local: openDb(localDbPath()),
   };
 }
+
+export type DlcMode = 'base' | 'all' | 'only';
+
+export const DEFAULT_DLC_MODE: DlcMode = 'base';
+
+/**
+ * Returns a constant SQL fragment — never caller text — so composing it into a query cannot inject.
+ * `alias` names the pages table in queries that join it under a short name.
+ */
+export function dlcPredicate(mode: DlcMode, alias = 'pages'): string {
+  switch (mode) {
+    case 'only': return `${alias}.dlc = 1`;
+    case 'all': return '1=1';
+    case 'base':
+    default: return `${alias}.dlc = 0`;
+  }
+}

@@ -5,6 +5,7 @@ import { memoryDb } from './helpers.js';
 import { replaceRedirects, upsertPage } from '../src/store/pages.js';
 import { resolveName } from '../src/query/resolve.js';
 import { bossInfo, getPage, itemStats, questSteps, search, sourcesStatus, whereIs } from '../src/query/lookups.js';
+import { dlcPredicate } from '../src/query/dbs.js';
 import type { Dbs } from '../src/query/dbs.js';
 
 const dbs = (): Dbs => ({ shipped: buildFixtureDb(), local: null });
@@ -243,4 +244,15 @@ test('a strong local match beats a weak full-text hit in shipped data', () => {
   const resolved = resolveName({ shipped, local }, 'Cuckoo')!;
   assert.equal(resolved.match, 'exact');
   assert.equal(resolved.provenance.source, 'fextralife');
+});
+
+test('dlcPredicate produces constant SQL per mode', () => {
+  assert.equal(dlcPredicate('base'), 'pages.dlc = 0');
+  assert.equal(dlcPredicate('only'), 'pages.dlc = 1');
+  assert.equal(dlcPredicate('all'), '1=1');
+});
+
+test('dlcPredicate honours a table alias', () => {
+  assert.equal(dlcPredicate('base', 'p'), 'p.dlc = 0');
+  assert.equal(dlcPredicate('all', 'p'), '1=1');
 });
