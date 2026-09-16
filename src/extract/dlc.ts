@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { PageRow } from './types.js';
 
 export type DlcSignal = 'override' | 'hub_page' | 'sote_template' | 'title_suffix' | 'category';
@@ -14,19 +15,35 @@ export interface Overrides {
   base: string[];
 }
 
-const DEFAULT_OVERRIDES_PATH = new URL('../../data/dlc-overrides.json', import.meta.url).pathname;
+// fileURLToPath (not .pathname) decodes percent-escapes, so an install path with a space still resolves.
+const DEFAULT_OVERRIDES_PATH = fileURLToPath(new URL('../../data/dlc-overrides.json', import.meta.url));
 
-/** Missing or malformed overrides must not take a sync down; an empty list is the safe default. */
+/**
+ * A missing file is legitimate — overrides are optional — and yields empty lists. Malformed JSON, or
+ * JSON that isn't an object, is not: this file is where human judgment lands, and the only place it
+ * lands, so a typo here must fail the sync loudly instead of silently reverting every correction.
+ */
 export function loadOverrides(path: string = DEFAULT_OVERRIDES_PATH): Overrides {
+  let raw: string;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    if (!parsed || typeof parsed !== 'object') return { dlc: [], base: [] };
-    const raw = parsed as Record<string, unknown>;
-    const list = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
-    return { dlc: list(raw.dlc), base: list(raw.base) };
+    raw = readFileSync(path, 'utf8');
   } catch {
     return { dlc: [], base: [] };
   }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`dlc overrides file at ${path} is not valid JSON: ${(err as Error).message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`dlc overrides file at ${path} must contain a JSON object`);
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  const list = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
+  return { dlc: list(obj.dlc), base: list(obj.base) };
 }
 
 const lowerSet = (titles: string[]): Set<string> => new Set(titles.map((t) => t.toLowerCase()));

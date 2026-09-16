@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { classifyPage, loadOverrides, type Overrides } from '../src/extract/dlc.js';
 import type { PageRow } from '../src/extract/types.js';
 
@@ -71,4 +75,37 @@ test('loadOverrides reads the committed file', () => {
 test('loadOverrides returns empty lists when the file is absent', () => {
   const overrides = loadOverrides('/nonexistent/dlc-overrides.json');
   assert.deepEqual(overrides, { dlc: [], base: [] });
+});
+
+test('loadOverrides resolves a path with a space, the way an npm install path can', () => {
+  // Mirrors how DEFAULT_OVERRIDES_PATH is built: a file:// URL (which percent-encodes the
+  // space) converted back with fileURLToPath. .pathname would leave a literal %20 and ENOENT.
+  const dir = mkdtempSync(path.join(tmpdir(), 'dlc overrides '));
+  const file = path.join(dir, 'dlc-overrides.json');
+  writeFileSync(file, JSON.stringify({ dlc: ['Spaced Boss'], base: [] }));
+
+  const resolved = fileURLToPath(pathToFileURL(file));
+  assert.ok(!resolved.includes('%20'));
+  assert.deepEqual(loadOverrides(resolved), { dlc: ['Spaced Boss'], base: [] });
+});
+
+test('loadOverrides throws on malformed JSON instead of silently reverting to empty', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'dlc-bad-json-'));
+  const file = path.join(dir, 'dlc-overrides.json');
+  writeFileSync(file, '{ not valid json');
+  assert.throws(() => loadOverrides(file), /dlc overrides file at .* is not valid JSON/);
+});
+
+test('loadOverrides throws when the file is valid JSON but not an object', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'dlc-bad-shape-'));
+  const file = path.join(dir, 'dlc-overrides.json');
+  writeFileSync(file, '[1, 2, 3]');
+  assert.throws(() => loadOverrides(file), /must contain a JSON object/);
+});
+
+test('loadOverrides tolerates a wrong-typed dlc/base key without throwing', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'dlc-bad-field-'));
+  const file = path.join(dir, 'dlc-overrides.json');
+  writeFileSync(file, JSON.stringify({ dlc: 'not-an-array', base: null }));
+  assert.deepEqual(loadOverrides(file), { dlc: [], base: [] });
 });
