@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { Db } from '../db/open.js';
 import type { PageRow } from './types.js';
 
 export type DlcSignal = 'override' | 'hub_page' | 'sote_template' | 'title_suffix' | 'category';
@@ -82,4 +83,51 @@ export function classifyPage(page: PageRow, ctx: ClassifyContext): Classificatio
   if (ctx.dlcCategoryTitles.has(page.title)) signals.push('category');
 
   return { dlc: signals.length > 0, signals, hasDlcSections: false };
+}
+
+export const DLC_SIGNALS: DlcSignal[] = ['override', 'hub_page', 'sote_template', 'title_suffix', 'category'];
+
+export interface DlcReport {
+  pages: number;
+  dlc: number;
+  hasDlcSections: number;
+  bySignal: Record<DlcSignal, number>;
+  /** Base-game pages that nonetheless mention DLC content: the queue for the override file. */
+  ambiguous: string[];
+}
+
+/**
+ * Labels every page in the db. Runs after runExtractors rather than inside it: extractors write rows
+ * keyed by page_id into tables clearDerived truncates, and this writes a column on pages itself.
+ */
+export function classifyDlc(db: Db, opts: { overrides?: Overrides; now?: () => Date } = {}): DlcReport {
+  const overrides = opts.overrides ?? loadOverrides();
+  const now = opts.now ?? (() => new Date());
+  const dlcCategoryTitles = new Set((db.prepare('SELECT title FROM dlc_categories').all() as { title: string }[]).map((r) => r.title));
+  const ctx: ClassifyContext = { overrides, dlcCategoryTitles };
+
+  const pages = db.prepare('SELECT id, source, title, wikitext FROM pages ORDER BY id').all() as PageRow[];
+  const bySignal = Object.fromEntries(DLC_SIGNALS.map((s) => [s, 0])) as Record<DlcSignal, number>;
+  const report: DlcReport = { pages: pages.length, dlc: 0, hasDlcSections: 0, bySignal, ambiguous: [] };
+
+  const update = db.prepare('UPDATE pages SET dlc = ?, dlc_signals = ?, has_dlc_sections = ? WHERE id = ?');
+  db.transaction(() => {
+    for (const page of pages) {
+      const result = classifyPage(page, ctx);
+      update.run(result.dlc ? 1 : 0, result.signals.length ? JSON.stringify(result.signals) : null, result.hasDlcSections ? 1 : 0, page.id);
+      if (result.dlc) report.dlc++;
+      if (result.hasDlcSections) {
+        report.hasDlcSections++;
+        report.ambiguous.push(page.title);
+      }
+      for (const signal of result.signals) bySignal[signal]++;
+    }
+
+    const at = now().toISOString();
+    db.prepare('DELETE FROM dlc_report').run();
+    const insertReport = db.prepare('INSERT INTO dlc_report (signal, hits, at) VALUES (?, ?, ?)');
+    for (const signal of DLC_SIGNALS) insertReport.run(signal, bySignal[signal], at);
+  })();
+
+  return report;
 }

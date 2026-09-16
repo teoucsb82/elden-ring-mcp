@@ -4,8 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { classifyPage, loadOverrides, type Overrides } from '../src/extract/dlc.js';
+import { classifyDlc, classifyPage, loadOverrides, type Overrides } from '../src/extract/dlc.js';
 import type { PageRow } from '../src/extract/types.js';
+import { memoryDb } from './helpers.js';
+
+const insert = (db: ReturnType<typeof memoryDb>, title: string, wikitext: string) =>
+  db.prepare('INSERT INTO pages (source, title, url, fetched_at, license, wikitext) VALUES (?,?,?,?,?,?)')
+    .run('fandom', title, `https://x/${title}`, 'now', 'CC BY-SA 3.0', wikitext);
 
 const page = (title: string, wikitext: string | null): PageRow => ({ id: 1, source: 'fandom', title, wikitext });
 const noOverrides: Overrides = { dlc: [], base: [] };
@@ -108,4 +113,56 @@ test('loadOverrides tolerates a wrong-typed dlc/base key without throwing', () =
   const file = path.join(dir, 'dlc-overrides.json');
   writeFileSync(file, JSON.stringify({ dlc: 'not-an-array', base: null }));
   assert.deepEqual(loadOverrides(file), { dlc: [], base: [] });
+});
+
+test('classifyDlc labels every page and reports the signals', () => {
+  const db = memoryDb();
+  insert(db, 'Verdigris Armor', 'Added in the {{SotE}} expansion.');
+  insert(db, 'Icerind Hatchet', '{{Infobox Weapon}}');
+  insert(db, 'Weapons', 'Includes {{SotE}} armaments.');
+  db.prepare('INSERT INTO dlc_categories (title) VALUES (?)').run('Scadu Altus');
+  insert(db, 'Scadu Altus', 'A region.');
+
+  const report = classifyDlc(db, { overrides: { dlc: ['Rellana, Twin Moon Knight'], base: ['Weapons'] } });
+
+  assert.equal(report.pages, 4);
+  assert.equal(report.dlc, 2);
+  assert.equal(report.hasDlcSections, 1);
+  assert.equal(report.bySignal.sote_template, 1);
+  assert.equal(report.bySignal.category, 1);
+
+  const row = (title: string) => db.prepare('SELECT dlc, has_dlc_sections, dlc_signals FROM pages WHERE title = ?').get(title) as
+    { dlc: number; has_dlc_sections: number; dlc_signals: string | null };
+  assert.equal(row('Verdigris Armor').dlc, 1);
+  assert.deepEqual(JSON.parse(row('Verdigris Armor').dlc_signals ?? '[]'), ['sote_template']);
+  assert.equal(row('Icerind Hatchet').dlc, 0);
+  assert.equal(row('Weapons').dlc, 0);
+  assert.equal(row('Weapons').has_dlc_sections, 1);
+  assert.equal(row('Scadu Altus').dlc, 1);
+});
+
+test('classifyDlc records ambiguous pages without marking them dlc', () => {
+  const db = memoryDb();
+  insert(db, 'Armor Sets', 'Lists {{SotE}} sets.');
+  const report = classifyDlc(db, { overrides: { dlc: [], base: ['Armor Sets'] } });
+  assert.deepEqual(report.ambiguous, ['Armor Sets']);
+  assert.equal((db.prepare('SELECT dlc FROM pages WHERE title = ?').get('Armor Sets') as { dlc: number }).dlc, 0);
+});
+
+test('classifyDlc writes a dlc_report row per signal', () => {
+  const db = memoryDb();
+  insert(db, 'Verdigris Armor', '{{SotE}}');
+  classifyDlc(db, { overrides: { dlc: [], base: [] }, now: () => new Date('2026-09-15T00:00:00.000Z') });
+  const rows = db.prepare('SELECT signal, hits, at FROM dlc_report ORDER BY signal').all() as { signal: string; hits: number; at: string }[];
+  assert.ok(rows.some((r) => r.signal === 'sote_template' && r.hits === 1));
+  assert.ok(rows.every((r) => r.at === '2026-09-15T00:00:00.000Z'));
+});
+
+test('classifyDlc is idempotent', () => {
+  const db = memoryDb();
+  insert(db, 'Verdigris Armor', '{{SotE}}');
+  const first = classifyDlc(db, { overrides: { dlc: [], base: [] } });
+  const second = classifyDlc(db, { overrides: { dlc: [], base: [] } });
+  assert.deepEqual(first.bySignal, second.bySignal);
+  assert.equal((db.prepare('SELECT count(*) AS n FROM dlc_report').get() as { n: number }).n, second.pages > 0 ? 5 : 0);
 });
