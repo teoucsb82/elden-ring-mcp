@@ -74,9 +74,15 @@ test('the default mode answers about base-game pages and still gates dlc pages',
   shipped.close();
 });
 
+/**
+ * Realm of Shadow is the DLC's own setting page. Its lead reads "is the setting of the DLC expansion
+ * for {{ER}}, {{SotE}}" — a coordinate product TITLE, which the both-products rule cannot tell from a
+ * genuine "in both games" claim, so it was demoted to base game. Corrected in the override file
+ * rather than by tuning an already brittle regex, and pinned here so it cannot regress again.
+ */
 test('known dlc pages are classified as dlc', { skip: hasDb ? false : 'data/elden-ring.db not present' }, () => {
   const db = openDb(DB_PATH, { readonly: true });
-  for (const title of ['Verdigris Armor', 'Messmer the Impaler', 'Scadu Altus', 'Rellana, Twin Moon Knight']) {
+  for (const title of ['Verdigris Armor', 'Messmer the Impaler', 'Scadu Altus', 'Rellana, Twin Moon Knight', 'Realm of Shadow']) {
     const row = db.prepare('SELECT dlc FROM pages WHERE title = ?').get(title) as { dlc: number } | undefined;
     assert.ok(row, `${title} must exist in the snapshot`);
     assert.equal(row.dlc, 1, `${title} must be classified as dlc`);
