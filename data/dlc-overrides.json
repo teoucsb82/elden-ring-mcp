@@ -1,8 +1,13 @@
 {
-  "_comment": "Human corrections to the DLC classifier. 'dlc' forces a page to DLC; 'base' forces it to base game. 'base' is for index/hub pages that list DLC items, and for base-game pages the wiki's own markers mislabel. Both win over every automatic signal.",
+  "_comment": "Human corrections to the DLC classifier. 'dlc' forces a page to DLC; 'base' forces it to base game. 'base' is for index/hub pages that list DLC items, and for base-game pages the wiki's own markers mislabel - Godslayer Incantations is base-game content whose second lead paragraph says 'All bosses in {{SotE}} are resistant...', the one page in the snapshot where a predicate marker sits outside the definition sentence. 'dlc' is for DLC-only pages whose lead never predicates the DLC of its own subject - typically 'in {{ER}} and {{SotE}}', which reads as a both-products claim and which no rule can tell from the real thing. Both win over every automatic signal.",
   "dlc": [
     "Rellana, Twin Moon Knight",
-    "Realm of Shadow"
+    "Realm of Shadow",
+    "Cocoon of the Empyrean",
+    "Moangrave",
+    "Dragon Communion Altar",
+    "Miquella the Kind/dialogue",
+    "Stranded Souls/dialogue"
   ],
   "base": [
     "Weapons",
@@ -16,6 +21,7 @@
     "Ashes of War",
     "Shields",
     "Key Items",
-    "Starscourge Radahn"
+    "Starscourge Radahn",
+    "Godslayer Incantations"
   ]
 }

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { Db } from '../db/open.js';
 import type { PageRow } from './types.js';
 
-export type DlcSignal = 'override' | 'hub_page' | 'sote_template' | 'title_suffix' | 'category';
+export type DlcSignal = 'override' | 'hub_page' | 'sote_template' | 'sote_link' | 'title_suffix' | 'category';
 
 export interface Classification {
   dlc: boolean;
@@ -50,49 +50,64 @@ export function loadOverrides(path: string = DEFAULT_OVERRIDES_PATH): Overrides 
 const lowerSet = (titles: string[]): Set<string> => new Set(titles.map((t) => t.toLowerCase()));
 
 /** The wiki's own DLC marker template, e.g. "added in the {{SotE}} expansion". */
-const SOTE_TEMPLATE = /\{\{\s*SotE\b/gi;
+const SOTE = String.raw`\{\{\s*SotE\b`;
+/** The wiki's other marker template: `{{in|se}}` and `{{in|sote}}` are written only as a predicate. */
+const IN_SE = String.raw`\{\{\s*in\s*\|\s*(?:se|sote)\s*(?:\||\}\})`;
+/** Any spelling, anywhere — template, {{in|se}}, or the plain article link: what has_dlc_sections reports. */
+const SOTE_ANY = new RegExp(`${SOTE}|${IN_SE}|\\[\\[Elden Ring: Shadow of the Erdtree(?:\\|[^\\]]*)?\\]\\]`, 'gi');
 const TITLE_SUFFIX = /\(Shadow of the Erdtree\)\s*$/i;
 
-/**
- * `{{SotE}}` after a link or a line break tags the LINKED thing, not the page it sits on: the wiki
- * writes `[[Deflecting Hardtear]] {{SotE}}` inside base-game lists. Treating it as a page marker
- * labelled 167 base-game pages DLC, Flask of Crimson Tears and 33 Ash of War pages among them.
- */
-const INLINE_MARKER = /(?:\]\]|<br\s*\/?>)\s*$/i;
 /** First `==` heading; everything before it is the lead, where a page states what its subject is. */
 const LEAD_END = /^[ \t]*==/m;
 /**
- * A lead listing the products as coordinates — "in {{ER}} and {{SotE}}", "in {{ER}}, {{SotE}}, and
- * {{ERN}}" — says the subject is in BOTH, so it ships with the base game. A genuine DLC page names
- * one product: "in {{ER}}: {{SotE}}", "in {{ER}}, included in the {{SotE}} DLC", or "in {{SotE}}".
+ * A page IS DLC when its lead says so in predicate form — "is a Light Greatsword {{in|se}}",
+ * "in {{ER}}: {{SotE}}", "a boss in {{SotE}}", "in {{ER}}, included in the {{SotE}} DLC".
+ *
+ * Requiring the predicate is what excludes every other lead mention, without a list of exclusions:
+ * an inline tag on a linked item ("[[Deflecting Hardtear]] {{SotE}}", 167 base pages including
+ * Flask of Crimson Tears and 33 Ash of War pages), a coordinate list of both products ("in {{ER}}
+ * and {{SotE}}" — Godslayer Incantations, Paintings), a negation ("not implemented in {{ER}} or
+ * {{SotE}}" — Unused Content) and a patch note ("it also patched {{SotE}}" — Game Version/1.15).
+ * Mentions below the lead are excluded by position: they are notes about the DLC, not claims about
+ * this page's subject.
  */
-const BOTH_GAMES = /\{\{\s*ER\s*\}\}(?:\s*,\s*|\s+and\s+)(?:and\s+)?(?:in\s+)?(?:the\s+)?\{\{\s*SotE\b/i;
+const LEAD_MARKERS: RegExp[] = [
+  new RegExp(IN_SE, 'i'),
+  new RegExp(String.raw`\bin\s+\{\{\s*ER\s*\}\}\s*(?:<i>)?\s*:\s*(?:</i>)?\s*${SOTE}`, 'i'),   // in {{ER}}: {{SotE}}
+  new RegExp(String.raw`\bin\s+(?:the\s+)?${SOTE}`, 'i'),                                       // in {{SotE}} / in the {{SotE}} expansion
+  new RegExp(String.raw`\bincluded\s+in\s+(?:the\s+)?${SOTE}`, 'i'),                            // in {{ER}}, included in the {{SotE}} DLC
+];
+/**
+ * The same predicate form with the plain article link instead of a template, the spelling no template
+ * rule could ever see. The optional `''`/`<i>` is not cosmetic: the wiki italicises a product title,
+ * so Milady, Putrescent Knight and Needle Knight Leda all read "in ''[[Elden Ring: Shadow of the
+ * Erdtree]]''" and a rule without it misses every page of that shape. A distinct signal so its reach
+ * can be measured on its own.
+ */
+const LEAD_LINK = /\bin\s+(?:the\s+)?(?:'{2,5}|<i>)?\s*\[\[Elden Ring: Shadow of the Erdtree(?:\|[^\]]*)?\]\]/i;
 
 interface SoteMentions {
-  /** Any occurrence at all, inline markers included — what has_dlc_sections reports. */
+  /** Any occurrence at all, in any spelling and anywhere on the page — what has_dlc_sections reports. */
   any: boolean;
-  /** An occurrence that claims the page's own subject is DLC. */
+  /** A template marker in the lead, in predicate form: the page claims its own subject is DLC. */
   pageMarker: boolean;
+  /** The same claim written with a plain link to the expansion's article. */
+  linkMarker: boolean;
 }
 
 /**
- * Separates "this page IS DLC" from "this page MENTIONS DLC". Three exclusions, each measured
- * against the shipped snapshot: inline link markers (167 pages), mentions below the lead — trivia
- * and notes such as "all bosses in {{SotE}} resist…" (40 pages) — and leads naming both products
- * (41 pages). None of them touches Verdigris Armor, Messmer, Rakshasa Armor or Scadu Altus.
+ * Separates "this page IS DLC" from "this page MENTIONS DLC". The separation is grammatical, not a
+ * list of exclusions: only a lead that predicates the DLC of its own subject counts as a claim.
  */
 export function soteMentions(wikitext: string): SoteMentions {
-  const leadEnd = LEAD_END.exec(wikitext)?.index ?? wikitext.length;
-  const bothGames = BOTH_GAMES.test(wikitext.slice(0, leadEnd));
-  const re = new RegExp(SOTE_TEMPLATE.source, 'gi');
-  const result: SoteMentions = { any: false, pageMarker: false };
-  for (let m = re.exec(wikitext); m; m = re.exec(wikitext)) {
-    result.any = true;
-    if (INLINE_MARKER.test(wikitext.slice(Math.max(0, m.index - 20), m.index))) continue;
-    if (m.index >= leadEnd || bothGames) continue;
-    result.pageMarker = true;
-  }
-  return result;
+  const lead = wikitext.slice(0, LEAD_END.exec(wikitext)?.index ?? wikitext.length);
+  // SOTE_ANY is global, so lastIndex survives a .test() and would make every other call miss.
+  SOTE_ANY.lastIndex = 0;
+  return {
+    any: SOTE_ANY.test(wikitext),
+    pageMarker: LEAD_MARKERS.some((re) => re.test(lead)),
+    linkMarker: LEAD_LINK.test(lead),
+  };
 }
 
 export interface ClassifyContext {
@@ -110,7 +125,7 @@ export interface ClassifyContext {
  */
 export function classifyPage(page: PageRow, ctx: ClassifyContext): Classification {
   const wikitext = page.wikitext ?? '';
-  const { any: mentionsDlc, pageMarker } = soteMentions(wikitext);
+  const { any: mentionsDlc, pageMarker, linkMarker } = soteMentions(wikitext);
   const title = page.title.toLowerCase();
 
   const forcedDlc = lowerSet(ctx.overrides.dlc);
@@ -121,16 +136,17 @@ export function classifyPage(page: PageRow, ctx: ClassifyContext): Classificatio
 
   const signals: DlcSignal[] = [];
   if (pageMarker) signals.push('sote_template');
+  if (linkMarker) signals.push('sote_link');
   if (TITLE_SUFFIX.test(page.title)) signals.push('title_suffix');
   if (ctx.dlcCategoryTitles.has(page.title)) signals.push('category');
 
   const dlc = signals.length > 0;
-  // A base page may legitimately mention the DLC — an inline link marker, a trivia note. That is what
-  // has_dlc_sections is for: caveat the answer, never withhold the text.
+  // A base page may legitimately mention the DLC — an inline tag on a linked item, a trivia note.
+  // That is what has_dlc_sections is for: caveat the answer, never withhold the text.
   return { dlc, signals, hasDlcSections: !dlc && mentionsDlc };
 }
 
-export const DLC_SIGNALS: DlcSignal[] = ['override', 'hub_page', 'sote_template', 'title_suffix', 'category'];
+export const DLC_SIGNALS: DlcSignal[] = ['override', 'hub_page', 'sote_template', 'sote_link', 'title_suffix', 'category'];
 
 export interface DlcReport {
   pages: number;
