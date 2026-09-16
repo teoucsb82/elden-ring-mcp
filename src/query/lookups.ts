@@ -2,7 +2,7 @@ import type { Db } from '../db/open.js';
 import { SCALING_ORDER } from '../extract/common.js';
 import { BREAK_PATTERN, type QuestStep } from '../extract/quest.js';
 import { DEFAULT_DLC_MODE, dlcOf, dlcPredicate, type Dbs, type DlcMode } from './dbs.js';
-import { ftsQuery, isDlcFiltered, resolveName, type DlcFiltered, type Provenance, type Resolved } from './resolve.js';
+import { ftsQuery, isDlcFiltered, resolveName, type DlcFiltered, type Provenance, type ResolveOptions, type Resolved } from './resolve.js';
 
 /**
  * `reason` is declared as absent rather than omitted: without it a richer miss (dlc_filtered,
@@ -44,8 +44,8 @@ type ResolveOutcome =
   | { kind: 'missing'; miss: NotFound };
 
 /** One entry point for every name-resolving lookup, so none of them can forget the dlc check. */
-function resolveFor(dbs: Dbs, name: string, mode: DlcMode): ResolveOutcome {
-  const r = resolveName(dbs, name, mode);
+function resolveFor(dbs: Dbs, name: string, mode: DlcMode, opts: ResolveOptions = {}): ResolveOutcome {
+  const r = resolveName(dbs, name, mode, opts);
   if (!r) return { kind: 'missing', miss: notFound(name) };
   if (isDlcFiltered(r)) return { kind: 'filtered', miss: dlcFiltered(name, r, mode) };
   return { kind: 'ok', resolved: r };
@@ -125,7 +125,7 @@ export function search(dbs: Dbs, query: string, limit = 10, mode: DlcMode = DEFA
  * say which happened so a caller can tell fragment prose from page prose.
  */
 function withFragment<T extends object>(r: Resolved, fallback: () => SectionOut[], rest: T) {
-  const base = { provenance: r.provenance, match: r.match, ...rest };
+  const base = { provenance: r.provenance, match: r.match, alternates: r.alternates, ...rest };
   // No fragment at all is the ordinary case, and it must answer with the caller's usual sections.
   if (!r.fragment) return { ...base, sections: fallback() };
   const fragmentSections = sectionsOf(r, new RegExp(`^${escapeRegex(r.fragment)}$`, 'i'));
@@ -151,8 +151,8 @@ const sectionNotFound = (r: Resolved, section: string, headings: string[]) => ({
   hint: `The page "${r.provenance.title}" exists but has no section matching "${section}". Ask again with one of the headings listed, or omit section for the whole page. This says nothing about whether the section's subject exists.`,
 });
 
-export function getPage(dbs: Dbs, title: string, section?: string, mode: DlcMode = DEFAULT_DLC_MODE) {
-  const outcome = resolveFor(dbs, title, mode);
+export function getPage(dbs: Dbs, title: string, section?: string, mode: DlcMode = DEFAULT_DLC_MODE, opts: ResolveOptions = {}) {
+  const outcome = resolveFor(dbs, title, mode, opts);
   if (outcome.kind !== 'ok') return outcome.miss;
   const r = outcome.resolved;
   const all = sectionsOf(r);
@@ -162,7 +162,7 @@ export function getPage(dbs: Dbs, title: string, section?: string, mode: DlcMode
     const sections = all.filter((row) => wanted.test(row.heading));
     // An asked-for section that matches nothing is a section miss, never a missing page.
     return sections.length
-      ? { provenance: r.provenance, match: r.match, dlc: r.dlc, has_dlc_sections: r.hasDlcSections, sections }
+      ? { provenance: r.provenance, match: r.match, alternates: r.alternates, dlc: r.dlc, has_dlc_sections: r.hasDlcSections, sections }
       : sectionNotFound(r, section, all.map((row) => row.heading));
   }
   return withFragment(r, () => all, { dlc: r.dlc, has_dlc_sections: r.hasDlcSections });
@@ -178,8 +178,8 @@ function parsePrereqs(json: string): string[] {
   }
 }
 
-export function whereIs(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE) {
-  const outcome = resolveFor(dbs, name, mode);
+export function whereIs(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE, opts: ResolveOptions = {}) {
+  const outcome = resolveFor(dbs, name, mode, opts);
   if (outcome.kind !== 'ok') return outcome.miss;
   const r = outcome.resolved;
   const row = r.db.prepare('SELECT method, location_text, nearest_grace, prereqs, missable FROM acquisition WHERE page_id = ?').get(r.pageId) as
@@ -187,6 +187,7 @@ export function whereIs(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE
   return {
     provenance: r.provenance,
     match: r.match,
+    alternates: r.alternates,
     dlc: r.dlc,
     has_dlc_sections: r.hasDlcSections,
     acquisition: row ? { ...row, prereqs: parsePrereqs(row.prereqs), missable: row.missable === 1 } : null,
@@ -194,13 +195,13 @@ export function whereIs(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE
   };
 }
 
-export function questSteps(dbs: Dbs, npc: string, mode: DlcMode = DEFAULT_DLC_MODE) {
-  const outcome = resolveFor(dbs, npc, mode);
+export function questSteps(dbs: Dbs, npc: string, mode: DlcMode = DEFAULT_DLC_MODE, opts: ResolveOptions = {}) {
+  const outcome = resolveFor(dbs, npc, mode, opts);
   if (outcome.kind !== 'ok') return outcome.miss;
   const r = outcome.resolved;
   const steps = r.db.prepare('SELECT step_ord, location, action, breaks_quest FROM quests WHERE page_id = ? ORDER BY step_ord').all(r.pageId) as QuestStep[];
   const notes = sectionsOf(r, /^notes$/i).flatMap((s) => s.markdown.split('\n')).filter((line) => BREAK_PATTERN.test(line));
-  return { provenance: r.provenance, match: r.match, dlc: r.dlc, has_dlc_sections: r.hasDlcSections, steps, warnings: notes, ...(steps.length ? {} : { sections: sectionsOf(r, /quest/i) }) };
+  return { provenance: r.provenance, match: r.match, alternates: r.alternates, dlc: r.dlc, has_dlc_sections: r.hasDlcSections, steps, warnings: notes, ...(steps.length ? {} : { sections: sectionsOf(r, /quest/i) }) };
 }
 
 const KIND_TABLE = { weapon: 'weapons', spell: 'spells', talisman: 'talismans', armor: 'armor' } as const;
@@ -283,8 +284,8 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
     'No item in the snapshot matches every filter. Loosen them (raise max_req, lower min_scaling, drop kind). Items whose requirement the wiki does not state are excluded from max_req filters rather than counted as zero.');
 }
 
-export function bossInfo(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE) {
-  const outcome = resolveFor(dbs, name, mode);
+export function bossInfo(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE, opts: ResolveOptions = {}) {
+  const outcome = resolveFor(dbs, name, mode, opts);
   if (outcome.kind !== 'ok') return outcome.miss;
   const r = outcome.resolved;
   const boss = (r.db.prepare('SELECT name, location, hp, runes, drops FROM bosses WHERE page_id = ?').get(r.pageId) as Record<string, unknown> | undefined) ?? null;

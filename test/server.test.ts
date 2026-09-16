@@ -10,12 +10,22 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { compact } from '../src/server/compact.js';
+import { resetFextralifeSession } from '../src/sources/fextralife.js';
 import { buildFixtureDb } from './fixtures/build-fixture-db.js';
 
 // Isolate the local cache db this import opens as a side effect, so the test never touches the real
 // ~/.cache/elden-ring-mcp used by an actual `npm run mcp` — even for a developer who has that env var
 // exported already. Plain `=`, not `??=`: this must win unconditionally, not defer to it.
-process.env.ELDEN_RING_MCP_CACHE = mkdtempSync(join(tmpdir(), 'er-server-test-'));
+const TEST_DIR = mkdtempSync(join(tmpdir(), 'er-server-test-'));
+process.env.ELDEN_RING_MCP_CACHE = TEST_DIR;
+
+// openDbs() runs once, at import time below, against whatever ELDEN_RING_MCP_DB then names. Left
+// unset it resolves data/elden-ring.db — a gitignored 40k-page snapshot that a fresh checkout and CI
+// do not have, so any in-process tool call would answer not_found for reasons that have nothing to
+// do with what is under test. Point it at the fixture instead. The spawned-process tests below pass
+// their own ELDEN_RING_MCP_DB in the child env and are unaffected by this.
+process.env.ELDEN_RING_MCP_DB = join(TEST_DIR, 'fixture.db');
+buildFixtureDb(process.env.ELDEN_RING_MCP_DB).close();
 
 // mcp-server.ts never starts stdio just by being imported — only its exported startStdio() does
 // that (see src/server/start.ts) — so importing it here for `server` and `INSTRUCTIONS` is
@@ -89,7 +99,38 @@ test('the server instructions state the base-game default', () => {
   assert.match(INSTRUCTIONS, /base game/i);
   assert.match(INSTRUCTIONS, /dlc_filtered/);
   assert.match(INSTRUCTIONS, /marker/i);
+  assert.match(INSTRUCTIONS, /alternates/);
   assert.doesNotMatch(INSTRUCTIONS, /discusses DLC events/);
+});
+
+/**
+ * #17: fetch: true was wired end to end but nothing exercised it, and the whole path was inert —
+ * the page was cached and then the shipped-first resolver handed back the Fandom copy, so the
+ * network round trip changed nothing the caller could see. This drives the real tool through an
+ * in-memory MCP client with a stubbed Fextralife fetch: no live network, and the assertion is that
+ * the fetched copy is what comes back, with the Fandom page listed beside it.
+ */
+test('get_page with fetch: true caches the Fextralife page and returns it', async () => {
+  const html = '<html><body><div id="wiki-content-block"><h2>Uchigatana</h2><p>Fextralife says Physical 115.</p></div></body></html>';
+  const urls: string[] = [];
+  resetFextralifeSession({
+    fetchImpl: async (url) => { urls.push(url); return { status: 200, headers: { get: () => null }, text: async () => html }; },
+    sleep: async () => {},
+  });
+  const client = new Client({ name: 'fetch-test', version: '0.0.0' });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct), server.connect(st)]);
+  try {
+    const result = await client.callTool({ name: 'get_page', arguments: { title: 'Uchigatana', fetch: true } });
+    const text = (result.content as { text: string }[])[0].text;
+    assert.deepEqual(urls, ['https://eldenring.wiki.fextralife.com/Uchigatana']);
+    assert.match(text, /"source":"fextralife"/);
+    assert.match(text, /Physical 115/);
+    assert.match(text, /"alternates":\[\{"source":"fandom"/);
+  } finally {
+    await client.close();
+    resetFextralifeSession();
+  }
 });
 
 // This spawns the real entry point (src/server/start.ts) as a subprocess over stdio, the same way an
