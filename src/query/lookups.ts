@@ -296,6 +296,14 @@ export function bossInfo(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MOD
 
 export function sourcesStatus(dbs: Dbs) {
   const count = (db: Db, sql: string) => (db.prepare(sql).get() as { n: number }).n;
+  // A stale snapshot is a state to report, not a failure: this is the one tool that still answers
+  // when the shipped db predates the dlc columns, because saying so is its whole job.
+  if (dbs.stale) {
+    return {
+      shipped: { stale: dbs.stale.detail, path: dbs.stale.path },
+      local: dbs.local ? { pages: count(dbs.local, 'SELECT count(*) AS n FROM pages') } : null,
+    };
+  }
   return {
     shipped: dbs.shipped
       ? {

@@ -6,15 +6,30 @@ import { DEFAULT_DB_PATH } from '../store/pages.js';
 export interface Dbs {
   shipped: Db | null;
   local: Db | null;
+  /** Set when the shipped db exists but predates the dlc columns; shipped is null in that case. */
+  stale?: { path: string; detail: string };
+}
+
+export const STALE_DETAIL = 'The shipped snapshot predates the Shadow of the Erdtree columns (built before 2026-09-16). Run `npm run extract` to migrate and classify it, or `npm run fetch-data` once a newer data-* release exists. Results are unavailable until then; this is not missing data.';
+
+/**
+ * The shipped db is opened read-only, which skips openDb's column migration, so a snapshot built
+ * before the dlc feature keeps its old pages table and every query dies with "no such column: dlc".
+ * Checking once at open time turns that into one named answer instead of an opaque failure per tool.
+ */
+function hasDlcColumns(db: Db): boolean {
+  return (db.prepare('PRAGMA table_info(pages)').all() as { name: string }[]).some((c) => c.name === 'dlc');
 }
 
 /** Opens the shipped db read-only (if present) and the local cache read-write (created on demand). */
 export function openDbs(): Dbs {
   const shippedPath = process.env.ELDEN_RING_MCP_DB ?? DEFAULT_DB_PATH;
-  return {
-    shipped: existsSync(shippedPath) ? openDb(shippedPath, { readonly: true }) : null,
-    local: openDb(localDbPath()),
-  };
+  const local = openDb(localDbPath());
+  if (!existsSync(shippedPath)) return { shipped: null, local };
+  const shipped = openDb(shippedPath, { readonly: true });
+  if (hasDlcColumns(shipped)) return { shipped, local };
+  shipped.close();
+  return { shipped: null, local, stale: { path: shippedPath, detail: STALE_DETAIL } };
 }
 
 export type DlcMode = 'base' | 'all' | 'only';

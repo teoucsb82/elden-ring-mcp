@@ -1,11 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import Database from 'better-sqlite3';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildFixtureDb } from './fixtures/build-fixture-db.js';
 import { memoryDb } from './helpers.js';
 import { replaceRedirects, upsertPage } from '../src/store/pages.js';
 import { isDlcFiltered, resolveName } from '../src/query/resolve.js';
 import { bossInfo, getPage, itemStats, questSteps, search, sourcesStatus, whereIs } from '../src/query/lookups.js';
-import { dlcPredicate } from '../src/query/dbs.js';
+import { dlcPredicate, openDbs, STALE_DETAIL } from '../src/query/dbs.js';
 import type { Dbs } from '../src/query/dbs.js';
 
 const dbs = (): Dbs => ({ shipped: buildFixtureDb(), local: null });
@@ -297,6 +301,34 @@ test('dlcPredicate honours a table alias', () => {
 test('dlcPredicate exempts unclassified cache pages from every mode', () => {
   for (const mode of ['base', 'only'] as const) {
     assert.match(dlcPredicate(mode), /source = 'fextralife'/, `${mode} mode must not assert a dlc status it never measured`);
+  }
+});
+
+// The only published data release (data-2026.09.16) predates the dlc columns. Opening it read-only
+// skips the migration, so every query died with "no such column: dlc" and nothing said why.
+test('openDbs reports a pre-dlc shipped db as stale instead of opening it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'er-stale-'));
+  const path = join(dir, 'old.db');
+  const old = new Database(path);
+  old.exec(`CREATE TABLE pages (id INTEGER PRIMARY KEY, source TEXT NOT NULL, title TEXT NOT NULL, url TEXT NOT NULL,
+    revid INTEGER, fetched_at TEXT NOT NULL, license TEXT NOT NULL, patch TEXT, wikitext TEXT, UNIQUE (source, title));`);
+  old.close();
+  // Restored in the finally: every later test in this file opens its own db, but openDbs() reads
+  // these two env vars, and a leaked ELDEN_RING_MCP_DB would point the whole process at a stale file.
+  const priorDb = process.env.ELDEN_RING_MCP_DB;
+  const priorCache = process.env.ELDEN_RING_MCP_CACHE;
+  process.env.ELDEN_RING_MCP_DB = path;
+  process.env.ELDEN_RING_MCP_CACHE = join(dir, 'cache');
+  try {
+    const dbs = openDbs();
+    assert.equal(dbs.shipped, null);
+    assert.equal(dbs.stale?.path, path);
+    assert.equal(dbs.stale?.detail, STALE_DETAIL);
+    assert.match(STALE_DETAIL, /npm run extract/);
+    dbs.local?.close();
+  } finally {
+    if (priorDb === undefined) delete process.env.ELDEN_RING_MCP_DB; else process.env.ELDEN_RING_MCP_DB = priorDb;
+    if (priorCache === undefined) delete process.env.ELDEN_RING_MCP_CACHE; else process.env.ELDEN_RING_MCP_CACHE = priorCache;
   }
 });
 

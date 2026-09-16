@@ -30,6 +30,8 @@ export const INSTRUCTIONS = `Elden Ring reference data from a versioned snapshot
 
 Results are base game only by default. Pass dlc: "all" to include Shadow of the Erdtree content, or dlc: "only" for DLC content alone. A result with reason: "dlc_filtered" means the page exists but this call's dlc mode excluded it — base mode (the default) excludes DLC content, only mode excludes base-game content — and the hint on the result says which way and how to re-run; never report it as missing data. Check its match field first: match: "search" means the name did not resolve and the gate describes a full-text guess at another page, not the subject asked about. A result with has_dlc_sections: true means a base-game page whose text also discusses DLC events; it is present and false on nearly every page, so its absence proves nothing. A result with NO dlc field is a cached Fextralife page, which the classifier never labels: its DLC status is unknown, so never state it is base game or DLC, and no dlc mode filters it out.
 
+A result with error: "data_stale" means the shipped snapshot predates this server's schema; tell the user to run npm run extract (or fetch a newer data release). It is not missing data.
+
 A result with not_found and no reason means the data does not cover it; say so instead of guessing, or retry with fetch: true to cache the Fextralife page. Fandom and Fextralife sometimes disagree on numbers; when both are present, show both with their sources. Directions from the wiki may omit prerequisites; state prerequisites the result lists.`;
 
 export const server = new McpServer({ name: 'elden-ring', version: '0.1.0' }, { instructions: INSTRUCTIONS });
@@ -37,6 +39,13 @@ const dbs = openDbs();
 
 const reply = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(compact(value)) }] });
 const fail = (error: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify({ error: 'tool_failed', detail: error instanceof Error ? error.message : String(error) }) }], isError: true });
+
+/**
+ * A shipped db built before the dlc columns answers every query with "no such column: dlc", which
+ * reads as a broken server. Name it instead, and say the command that fixes it. sources_status is
+ * the exception: it reports the staleness as status rather than failing.
+ */
+const staleReply = () => reply({ error: 'data_stale', path: dbs.stale?.path, detail: dbs.stale?.detail });
 
 const READ_ONLY = { readOnlyHint: true, idempotentHint: true, openWorldHint: false } as const;
 const MAY_FETCH = { readOnlyHint: false, idempotentHint: true, openWorldHint: true } as const;
@@ -48,6 +57,7 @@ const dlcArg = z.enum(['base', 'all', 'only']).optional().default('base')
 
 /** Runs a lookup; with fetch: true, caches the Fextralife page for `title` first. */
 async function withFetch<T>(title: string, fetch: boolean | undefined, lookup: () => T) {
+  if (dbs.stale) return staleReply();
   try {
     if (fetch && dbs.local) await cacheFextralife(dbs.local, title);
     return reply(lookup());
@@ -65,7 +75,7 @@ server.registerTool('search', {
     dlc: dlcArg,
   },
   annotations: READ_ONLY,
-}, async ({ query, limit, dlc }) => { try { return reply(search(dbs, query, limit, dlc)); } catch (error) { return fail(error); } });
+}, async ({ query, limit, dlc }) => { if (dbs.stale) return staleReply(); try { return reply(search(dbs, query, limit, dlc)); } catch (error) { return fail(error); } });
 
 server.registerTool('get_page', {
   title: 'Get page',
@@ -106,7 +116,7 @@ server.registerTool('item_stats', {
     dlc: dlcArg,
   },
   annotations: READ_ONLY,
-}, async ({ dlc, ...filter }) => { try { return reply(itemStats(dbs, filter, dlc)); } catch (error) { return fail(error); } });
+}, async ({ dlc, ...filter }) => { if (dbs.stale) return staleReply(); try { return reply(itemStats(dbs, filter, dlc)); } catch (error) { return fail(error); } });
 
 server.registerTool('boss', {
   title: 'Boss info',
