@@ -57,3 +57,44 @@ test('splitSections names the lead "Summary" and keeps heading order', () => {
   assert.match(sections[1].markdown, /Debate Parlor site of grace/);
   assert.deepEqual(sections.map((s) => s.ord), [0, 1]);
 });
+
+// Pages that cover several variants (Magma Wyrm, many bosses and armor sets) wrap them in Fandom's
+// <tabber>. The first real build left "<tabber>" and "|-|Makar=" in the text as literal prose and
+// gave the tab's content no heading of its own.
+test('tabber tabs become headings instead of leaking markup', () => {
+  const markdown = wikitextToMarkdown(`==Bosses==
+<tabber>
+|-|Magma Wyrm Makar=
+Makar blocks the path from Liurnia to the Altus Plateau.
+|-|Mt. Gelmir=
+A Magma Wyrm is encountered in a lava pool near [[Fort Laiedd]].
+</tabber>`);
+  assert.doesNotMatch(markdown, /tabber|\|-\|/);
+  const sections = splitSections(markdown);
+  assert.deepEqual(sections.map((s) => s.heading), ['Magma Wyrm Makar', 'Mt. Gelmir']);
+  assert.match(sections[0].markdown, /^Makar blocks the path/);
+  assert.match(sections[1].markdown, /Fort Laiedd/);
+});
+
+test('a lone pipe-dash line inside prose is not mistaken for a tab', () => {
+  assert.match(wikitextToMarkdown('Deals 10 |-| 20 damage.'), /Deals 10 \|-\| 20 damage\./);
+});
+
+// Location pages write the same tab label across two lines, which the single-line form missed.
+test('tabber tab label split across two lines still becomes a heading', () => {
+  const sections = splitSections(wikitextToMarkdown(`== Sites of Grace ==
+<tabber>
+
+|-|
+Artist's Shack  =
+
+{{Infobox Location
+|title = Artist's Shack
+}}
+
+Found just outside the shack.
+
+</tabber>`));
+  assert.deepEqual(sections.map((s) => s.heading), ["Artist's Shack"]);
+  assert.equal(sections[0].markdown, 'Found just outside the shack.');
+});

@@ -7,7 +7,7 @@ import { parseAcquisition } from '../src/extract/acquisition.js';
 import { parseQuestSteps } from '../src/extract/quest.js';
 import { wikitextToMarkdown } from '../src/wikitext/markdown.js';
 import { splitSections } from '../src/wikitext/sections.js';
-import { AZUR_CROWN, AZUR_STAFF, SELLEN_QUEST } from './fixtures/wikitext.js';
+import { AZUR_CROWN, AZUR_STAFF, ELEONORA_QUEST, LEDA_FLAT_QUEST, PATCHES_QUEST, RED_WOLF, SELLEN_QUEST, YMIR_QUEST } from './fixtures/wikitext.js';
 
 const section = (wikitext: string, heading: string) => splitSections(wikitextToMarkdown(wikitext)).find((s) => s.heading === heading)!.markdown;
 
@@ -67,4 +67,59 @@ test('extractors write acquisition and quest rows', () => {
   runExtractors(db);
   assert.deepEqual(db.prepare('SELECT method, nearest_grace, missable FROM acquisition').get(), { method: 'ground', nearest_grace: 'Debate Parlor', missable: 0 });
   assert.equal((db.prepare("SELECT count(*) AS n FROM quests WHERE npc = 'Sorceress Sellen'").get() as { n: number }).n, 3);
+});
+
+// --- shapes found in the first real build (see NOTES.md 2026-09-15) ---
+
+test('quest steps: a flat numbered list has no nested bullets, so each item is its own action', () => {
+  const steps = parseQuestSteps(section(LEDA_FLAT_QUEST, 'Questline Progression'));
+  assert.equal(steps.length, 3);
+  assert.equal(steps[0].location, null);
+  assert.match(steps[0].action, /^Defeat both Starscourge Radahn and Mohg/);
+  assert.equal(steps[1].step_ord, 2);
+  assert.equal(steps[2].action, '');
+  assert.match(String(steps[2].breaks_quest), /will fail the questline/);
+});
+
+test('quest steps: a flat item does not swallow the structured item that follows it', () => {
+  const steps = parseQuestSteps('1. Speak to him at the Roundtable Hold.\n1. Limgrave\n  - Hand over the letter.');
+  assert.deepEqual(steps.map((s) => [s.location, s.action]), [
+    [null, 'Speak to him at the Roundtable Hold.'],
+    ['Limgrave', 'Hand over the letter.'],
+  ]);
+});
+
+test('quest extractor accepts "Questline steps" and "<NPC>\'s Quest" headings but not "Quest items"', () => {
+  const db = memoryDb();
+  upsertPage(db, { source: 'fandom', title: 'Count Ymir', url: 'u', revid: 1, fetchedAt: '2026-09-15T00:00:00.000Z', wikitext: YMIR_QUEST, markdown: null, license: 'l' });
+  runExtractors(db);
+  const rows = db.prepare('SELECT location, action FROM quests WHERE npc = ? ORDER BY step_ord').all('Count Ymir') as { location: string; action: string }[];
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].location, 'Cathedral of Manus Metyr');
+  assert.match(rows[1].action, /Ring the bell/);
+  // "Quest items" is an item list, not steps: it must not be picked as the questline section.
+  assert.ok(!rows.some((r) => /Hole-Laden Necklace/.test(r.location ?? '')));
+});
+
+test('quest extractor covers NPCs whose page uses Infobox Boss or Infobox Enemy', () => {
+  const db = memoryDb();
+  for (const [title, text] of [['Patches', PATCHES_QUEST], ['Eleonora, Violet Bloody Finger', ELEONORA_QUEST]] as const) {
+    upsertPage(db, { source: 'fandom', title, url: 'u', revid: 1, fetchedAt: '2026-09-15T00:00:00.000Z', wikitext: text, markdown: null, license: 'l' });
+  }
+  runExtractors(db);
+  const patches = db.prepare('SELECT location, action, breaks_quest FROM quests WHERE npc = ? ORDER BY step_ord').all('Patches') as { location: string; action: string; breaks_quest: string | null }[];
+  assert.equal(patches.length, 2);
+  assert.equal(patches[0].location, 'Murkwater Cave');
+  assert.match(String(patches[0].breaks_quest), /fail the questline/);
+  assert.equal(patches[1].location, 'Scenic Isle');
+  // Patches is still a boss row; the quest extractor adds to that page, it does not replace it.
+  assert.equal((db.prepare("SELECT count(*) AS n FROM bosses WHERE name = 'Patches'").get() as { n: number }).n, 1);
+  assert.equal((db.prepare('SELECT count(*) AS n FROM quests WHERE npc = ?').get('Eleonora, Violet Bloody Finger') as { n: number }).n, 1);
+});
+
+test('a boss page with no questline section writes no quest rows', () => {
+  const db = memoryDb();
+  upsertPage(db, { source: 'fandom', title: 'Red Wolf of Radagon', url: 'u', revid: 1, fetchedAt: '2026-09-15T00:00:00.000Z', wikitext: RED_WOLF, markdown: null, license: 'l' });
+  runExtractors(db);
+  assert.equal((db.prepare('SELECT count(*) AS n FROM quests').get() as { n: number }).n, 0);
 });

@@ -24,7 +24,11 @@ export function addEntity(db: Db, pageId: number, type: string, name: string): v
   db.prepare('INSERT OR REPLACE INTO entities (page_id, type, name) VALUES (?, ?, ?)').run(pageId, type, name);
 }
 
-export function sectionMarkdown(db: Db, pageId: number, heading: RegExp): string | null {
+export function sectionMarkdowns(db: Db, pageId: number, heading: RegExp): string[] {
   const rows = db.prepare('SELECT heading, markdown FROM sections WHERE page_id = ? ORDER BY ord').all(pageId) as { heading: string; markdown: string }[];
-  return rows.find((row) => heading.test(row.heading))?.markdown ?? null;
+  return rows.filter((row) => heading.test(row.heading)).map((row) => row.markdown);
+}
+
+export function sectionMarkdown(db: Db, pageId: number, heading: RegExp): string | null {
+  return sectionMarkdowns(db, pageId, heading)[0] ?? null;
 }

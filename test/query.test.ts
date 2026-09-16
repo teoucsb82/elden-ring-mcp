@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildFixtureDb } from './fixtures/build-fixture-db.js';
 import { memoryDb } from './helpers.js';
-import { upsertPage } from '../src/store/pages.js';
+import { replaceRedirects, upsertPage } from '../src/store/pages.js';
 import { resolveName } from '../src/query/resolve.js';
 import { bossInfo, getPage, itemStats, questSteps, search, sourcesStatus, whereIs } from '../src/query/lookups.js';
 import type { Dbs } from '../src/query/dbs.js';
@@ -66,6 +66,19 @@ test('itemStats by name and by filter', () => {
 test('bossInfo via redirect returns boss row and fragment section', () => {
   const result = bossInfo(dbs(), 'Magma Wyrm Makar') as any;
   assert.equal(result.boss.hp, '2,204');
+  assert.deepEqual(result.sections.map((s: any) => s.heading), ['Overview']);
+});
+
+// On the real wiki, "Magma Wyrm Makar" redirects to Magma Wyrm#Bosses, and that heading holds only a
+// <tabber> whose per-boss prose lives under deeper headings, so the fragment section itself is empty
+// and dropped. The fragment must then fall back, not leave the answer with no text at all.
+test('bossInfo falls back to the usual sections when the redirect fragment names no section', () => {
+  const db = buildFixtureDb();
+  replaceRedirects(db, 'fandom', [{ from: 'Magma Wyrm Makar', to: 'Red Wolf of Radagon', fragment: 'Bosses' }]);
+  const result = bossInfo({ shipped: db, local: null }, 'Magma Wyrm Makar') as any;
+  assert.equal(result.match, 'redirect');
+  assert.equal(result.boss.hp, '2,204');
+  assert.ok(result.sections.length > 0, 'expected a fallback section, got none');
   assert.deepEqual(result.sections.map((s: any) => s.heading), ['Overview']);
 });
 

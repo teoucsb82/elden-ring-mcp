@@ -62,12 +62,58 @@ test('fetchPages batches by 50 and builds RawPage with provenance', async () => 
   assert.deepEqual(pages[0], { source: 'fandom', title: 'P0', url: 'https://eldenring.fandom.com/wiki/P0', revid: 7, fetchedAt: '2026-09-15T00:00:00.000Z', wikitext: 'text of P0', markdown: null, license: 'CC BY-SA 3.0 (eldenring.fandom.com)' });
 });
 
-test('listRedirects yields from/to/fragment', async () => {
-  const fetchImpl: FetchLike = async () => response(200, { query: { redirects: [{ from: 'Magma Wyrm Makar', to: 'Magma Wyrm', tofragment: 'Bosses' }] } });
-  const fandom = createFandom({ fetchImpl, sleep: noSleep, minIntervalMs: 0 });
+// The live API rejects "redirects" alongside generator=allpages, so this mock refuses it the way
+// MediaWiki does: enumerate the redirect titles first, then resolve them in a titles= batch.
+const redirectApi = (targets: Record<string, { to: string; tofragment?: string }>, pageSize = 2): FetchLike => async (url) => {
+  const params = new URL(url).searchParams;
+  if (params.get('generator') === 'allpages' && params.get('redirects')) {
+    return response(200, { error: { code: 'params', info: 'Use "gapfilterredir=nonredirects" instead of "redirects" when using "allpages" as a generator.' } });
+  }
+  const titles = Object.keys(targets);
+  if (params.get('generator') === 'allpages') {
+    assert.equal(params.get('gapfilterredir'), 'redirects');
+    const from = params.get('gapcontinue') ? titles.indexOf(params.get('gapcontinue')!) : 0;
+    const slice = titles.slice(from, from + pageSize);
+    const next = titles[from + pageSize];
+    return response(200, {
+      query: { pages: slice.map((title) => ({ title })) },
+      ...(next ? { continue: { gapcontinue: next, continue: 'gapcontinue||' } } : {}),
+    });
+  }
+  assert.equal(params.get('redirects'), '1');
+  const asked = params.get('titles')!.split('|');
+  return response(200, { query: { redirects: asked.map((from) => ({ from, ...targets[from] })) } });
+};
+
+test('listRedirects enumerates redirect titles, then resolves them to from/to/fragment', async () => {
+  const fandom = createFandom({
+    fetchImpl: redirectApi({
+      'Magma Wyrm Makar': { to: 'Magma Wyrm', tofragment: 'Bosses' },
+      'Comet Azur': { to: "Azur's Glintstone Staff" },
+      Sellen: { to: 'Sorceress Sellen' },
+    }),
+    sleep: noSleep,
+    minIntervalMs: 0,
+  });
   const rows = [];
   for await (const row of fandom.listRedirects()) rows.push(row);
-  assert.deepEqual(rows, [{ from: 'Magma Wyrm Makar', to: 'Magma Wyrm', fragment: 'Bosses' }]);
+  assert.deepEqual(rows, [
+    { from: 'Magma Wyrm Makar', to: 'Magma Wyrm', fragment: 'Bosses' },
+    { from: 'Comet Azur', to: "Azur's Glintstone Staff", fragment: null },
+    { from: 'Sellen', to: 'Sorceress Sellen', fragment: null },
+  ]);
+});
+
+test('listRedirects never sends the generator+redirects combination the live API rejects', async () => {
+  const urls: string[] = [];
+  const api = redirectApi({ Sellen: { to: 'Sorceress Sellen' } });
+  const fandom = createFandom({ fetchImpl: async (url, init) => { urls.push(url); return api(url, init); }, sleep: noSleep, minIntervalMs: 0 });
+  for await (const _ of fandom.listRedirects()) { /* drain */ }
+  assert.ok(urls.length > 0);
+  for (const url of urls) {
+    const params = new URL(url).searchParams;
+    assert.ok(!(params.get('generator') === 'allpages' && params.get('redirects')), `invalid combination in ${url}`);
+  }
 });
 
 test('MediaWiki error payload throws', async () => {

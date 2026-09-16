@@ -41,11 +41,18 @@ export function wikitextToMarkdown(wikitext: string): string {
   let text = wikitext.replace(/<!--[\s\S]*?-->/g, '');
   text = text.replace(/<ref[^>]*\/>/gi, '').replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, '');
   text = text.replace(/<gallery[\s\S]*?<\/gallery>/gi, '');
+  text = text.replace(/<\/?tabber\b[^>]*>/gi, '');
   text = stripTables(stripTemplates(text));
   text = text.replace(/<br\s*\/?>/gi, '\n');
+  // Some pages break a tab label onto its own line ("|-|\nArtist's Shack ="); rejoin before parsing.
+  text = text.replace(/^\|-\|[ \t]*\r?\n[ \t]*(?=[^\n]*=[ \t]*$)/gm, '|-|');
   const lines = text.split('\n').map((line) => {
     const heading = /^(={2,6})\s*(.*?)\s*\1\s*$/.exec(line);
     if (heading) return `${'#'.repeat(heading[1].length)} ${heading[2]}`;
+    // Fandom <tabber> tab label: the whole line is "|-|Label=". Its content follows, so make it a
+    // heading rather than leaving the scaffolding in the prose.
+    const tab = /^\|-\|\s*(.+?)\s*=\s*$/.exec(line);
+    if (tab) return `## ${tab[1]}`;
     const list = /^([*#]+)\s*(.*)$/.exec(line);
     if (list) return `${'  '.repeat(list[1].length - 1)}${list[1].endsWith('#') ? '1.' : '-'} ${list[2].trim()}`;
     return line.trimEnd();

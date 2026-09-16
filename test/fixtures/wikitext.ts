@@ -118,6 +118,63 @@ export const SELLEN_QUEST = `{{Infobox Character
 * Killing Preceptor Seluvis early locks you out of the puppet step.
 `;
 
+// Real shapes the live wiki uses that the Sellen fixture does not cover:
+// Patches is an NPC with a questline but an "Infobox Boss"; Leda writes a flat numbered list with
+// no nested action bullets; Count Ymir heads the section "Questline steps"; invasion NPCs such as
+// Eleonora use "Infobox Enemy". All four produced zero quest rows in the first real build.
+export const PATCHES_QUEST = `{{Infobox Boss
+| title         = Patches
+| location      = [[Murkwater Cave]]
+}}
+'''Patches''' is an [[NPC]] in {{ER}}.
+
+==Questline Progression==
+#[[Murkwater Cave]]
+#*Loot the chest to trigger Patches to jump down from above.
+#*Continuing to attack him will fail the questline.
+#[[Scenic Isle]]
+#*Patches relocates here and resumes trading.
+`;
+
+export const LEDA_FLAT_QUEST = `{{Infobox Character
+|title = Needle Knight Leda
+|role = NPC
+}}
+'''Needle Knight Leda''' is an [[NPC]] in {{ER}}.
+
+==Questline Progression==
+#Defeat both Starscourge Radahn and Mohg, Lord of Blood. Leda will appear in front of Miquella's cocoon.
+#Climb the stairs in the adjacent room and collect a letter from Leda.
+#Siding against Leda at the Church of the Bud will fail the questline.
+`;
+
+export const YMIR_QUEST = `{{Infobox_Character
+|title = Count Ymir
+|role = NPC
+}}
+'''Count Ymir''' is an [[NPC]] in {{ER}}.
+
+===Questline steps===
+# [[Cathedral of Manus Metyr]]
+#* Speak with Count Ymir to receive [[Hole-Laden Necklace]] and [[Ruins Map]]
+# [[Finger Ruins of Rhia]] (or Dheo)
+#* Ring the bell to receive [[Crimson Seed Talisman +1]]
+
+==Quest items==
+* [[Hole-Laden Necklace]]
+`;
+
+export const ELEONORA_QUEST = `{{Infobox Enemy
+|title = Eleonora, Violet Bloody Finger
+|location = [[Second Church of Marika]]
+}}
+'''Eleonora''' is an invader [[NPC]] in {{ER}}.
+
+==Eleonora's Quest==
+#[[Second Church of Marika]]
+#*Use the summon sign to invade and defeat Eleonora for the [[Bloody Helice]].
+`;
+
 export const MALFORMED = `{{Infobox Weapon
 | title = Broken Page
 | int_req = 12

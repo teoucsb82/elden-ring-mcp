@@ -49,8 +49,18 @@ export function createFandom(opts: FandomOptions = {}) {
       }
     },
 
+    /**
+     * Two passes: allpages enumerates the redirect titles, then `titles=…&redirects=1` resolves each
+     * batch to its target and fragment. The live API rejects `redirects` on an allpages generator
+     * ("Use gapfilterredir=nonredirects instead"), so the two calls cannot be collapsed into one.
+     */
     async *listRedirects(): AsyncGenerator<{ from: string; to: string; fragment: string | null }> {
-      for await (const json of paged({ action: 'query', generator: 'allpages', gapnamespace: '0', gaplimit: '50', gapfilterredir: 'redirects', redirects: '1' })) {
+      const titles: string[] = [];
+      for await (const json of paged({ action: 'query', generator: 'allpages', gapnamespace: '0', gaplimit: '500', gapfilterredir: 'redirects', prop: 'info' })) {
+        for (const page of json.query?.pages ?? []) titles.push(page.title);
+      }
+      for (let i = 0; i < titles.length; i += 50) {
+        const json = await api({ action: 'query', redirects: '1', titles: titles.slice(i, i + 50).join('|') });
         for (const r of json.query?.redirects ?? []) yield { from: r.from, to: r.to, fragment: r.tofragment ?? null };
       }
     },

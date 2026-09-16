@@ -134,8 +134,12 @@ export function bossInfo(dbs: Dbs, name: string) {
   const r = resolveName(dbs, name);
   if (!r) return notFound(name);
   const boss = (r.db.prepare('SELECT name, location, hp, runes, drops FROM bosses WHERE page_id = ?').get(r.pageId) as Record<string, unknown> | undefined) ?? null;
-  const heading = r.fragment ? new RegExp(`^${escapeRegex(r.fragment)}$`, 'i') : /overview|location|strateg|weakness|resist/i;
-  return { provenance: r.provenance, match: r.match, boss, sections: sectionsOf(r, heading) };
+  const usual = /overview|location|strateg|weakness|resist/i;
+  // A redirect fragment can name a heading that holds only a <tabber> and so carries no text of its
+  // own. Prefer the fragment, but never answer with no sections when the page has usable ones.
+  const fragmentSections = r.fragment ? sectionsOf(r, new RegExp(`^${escapeRegex(r.fragment)}$`, 'i')) : [];
+  const sections = fragmentSections.length ? fragmentSections : sectionsOf(r, usual);
+  return { provenance: r.provenance, match: r.match, boss, sections };
 }
 
 export function sourcesStatus(dbs: Dbs) {
