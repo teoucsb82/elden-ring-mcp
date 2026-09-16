@@ -144,6 +144,17 @@ const emptyPage = (query: string, r: Resolved) => ({
   hint: 'This page is in the snapshot but its wiki text is entirely templates and tables, so it holds no readable sections. Try search for pages that describe it, or pass fetch: true to cache the Fextralife page.',
 });
 
+/**
+ * The page resolved fine but holds none of the four item tables' rows: it is a boss, NPC or lore
+ * page, not an item. Returning notFound here used to say "No page matched", which is false — the
+ * page is right there, it just has no stats to report.
+ */
+const noStats = (query: string, r: Resolved) => ({
+  not_found: true as const, query, reason: 'no_stats' as const, page: r.provenance.title,
+  provenance: r.provenance, match: r.match,
+  hint: `The page "${r.provenance.title}" is in the snapshot but is not a weapon, spell, talisman or armor piece, so it has no stats. Use get_page, where_is or boss for it.`,
+});
+
 /** The page was found and the section was not: naming the page's real headings says what to ask for next. */
 const sectionNotFound = (r: Resolved, section: string, headings: string[]) => ({
   section_not_found: true as const, page: r.provenance.title, section, headings,
@@ -231,7 +242,7 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
     const r = outcome.resolved;
     const rows = (Object.entries(KIND_TABLE) as [Kind, string][]).flatMap(([kind, table]) =>
       (r.db.prepare(`SELECT * FROM ${table} WHERE page_id = ?`).all(r.pageId) as Record<string, unknown>[]).map((row) => ({ kind, ...row, provenance: r.provenance })));
-    if (!rows.length) return notFound(filter.name);
+    if (!rows.length) return noStats(filter.name, r);
     if (!filter.kind) return { rows, dlc: r.dlc, has_dlc_sections: r.hasDlcSections };
     // name + kind used to ignore kind, so asking for the spell "Uchigatana" handed back the katana.
     const matching = rows.filter((row) => row.kind === filter.kind);
@@ -253,12 +264,16 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
   const maxReq = Object.entries(filter.max_req ?? {}).filter((entry): entry is [Stat, number] => isStat(entry[0]) && typeof entry[1] === 'number');
 
   const kinds = filter.kind ? [filter.kind] : (Object.keys(KIND_TABLE) as Kind[]);
+  // Kinds max_req cannot apply to (talismans and armor carry no requirement columns at all). Tracked
+  // separately from the scaling skip above: only a max_req mismatch on every requested kind means the
+  // filter itself cannot ever match, which "loosen the filters" cannot fix.
+  const skipped = new Set<Kind>();
   const rows: (Record<string, unknown> & { kind: string; provenance: Provenance })[] = [];
   for (const db of [dbs.shipped, dbs.local]) {
     if (!db) continue;
     for (const kind of kinds) {
       if (scaling && kind !== 'weapon') continue;
-      if (maxReq.some(([stat]) => !REQ_STATS[kind].includes(stat))) continue;
+      if (maxReq.some(([stat]) => !REQ_STATS[kind].includes(stat))) { skipped.add(kind); continue; }
       const where: string[] = [];
       const params: (string | number)[] = [];
       // The join to pages puts a second table in scope, so every column here carries the `t.` prefix.
@@ -280,6 +295,12 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
     }
   }
   if (rows.length) return { rows: rows.slice(0, limit) };
+  // Every requested kind was skipped over max_req alone: no row was ever possible, so "loosen the
+  // filters" is not advice that can help. Name the mismatch instead.
+  if (maxReq.length && skipped.size === kinds.length) {
+    const stats = maxReq.map(([stat]) => stat).join(', ');
+    return invalidFilter(`max_req names ${stats} but ${[...skipped].join(', ')} carry no requirement columns; drop max_req or ask for weapon/spell.`);
+  }
   return noMatch(JSON.stringify({ kind: filter.kind, scaling_stat: filter.scaling_stat, min_scaling: filter.min_scaling, max_req: filter.max_req }),
     'No item in the snapshot matches every filter. Loosen them (raise max_req, lower min_scaling, drop kind). Items whose requirement the wiki does not state are excluded from max_req filters rather than counted as zero.');
 }
