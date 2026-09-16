@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { classifyDlc, classifyPage, loadOverrides, type Overrides } from '../src/extract/dlc.js';
+import { runExtractors } from '../src/extract/run.js';
 import type { PageRow } from '../src/extract/types.js';
 import { memoryDb } from './helpers.js';
 
@@ -165,4 +166,15 @@ test('classifyDlc is idempotent', () => {
   const second = classifyDlc(db, { overrides: { dlc: [], base: [] } });
   assert.deepEqual(first.bySignal, second.bySignal);
   assert.equal((db.prepare('SELECT count(*) AS n FROM dlc_report').get() as { n: number }).n, second.pages > 0 ? 5 : 0);
+});
+
+test('classification survives a re-extract', () => {
+  const db = memoryDb();
+  insert(db, 'Verdigris Armor', 'Added in the {{SotE}} expansion.');
+  classifyDlc(db, { overrides: { dlc: [], base: [] } });
+  assert.equal((db.prepare('SELECT dlc FROM pages WHERE title = ?').get('Verdigris Armor') as { dlc: number }).dlc, 1);
+
+  // runExtractors clears derived tables per page; pages.dlc is not one of them and must survive.
+  runExtractors(db);
+  assert.equal((db.prepare('SELECT dlc FROM pages WHERE title = ?').get('Verdigris Armor') as { dlc: number }).dlc, 1);
 });
