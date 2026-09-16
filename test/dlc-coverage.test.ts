@@ -10,16 +10,18 @@ const hasDb = existsSync(DB_PATH);
 /**
  * A bound in both directions. The old floor-only assertion could catch under-labelling alone, while
  * over-labelling is what the classifier actually did: {{SotE}} read as a page marker labelled 857
- * pages, 239 of them base-game. Measured on the 2026-09-16 snapshot: 618 dlc, 247 has_dlc_sections
- * before the category crawl ran, 622 and 246 after it.
+ * pages, 239 of them base-game. Measured on the 2026-09-16 snapshot after the predicate-form rules
+ * landed: 756 dlc (661 sote_template, 69 sote_link, 22 title_suffix, 123 category, 7 override) and
+ * 273 has_dlc_sections. The jump from 622 is the two spellings the template rule could not see,
+ * {{in|se}} and the plain ''[[Elden Ring: Shadow of the Erdtree]]'' link.
  * A change that moves either materially should have to say so here.
  */
 test('the shipped db classifies a plausible share of pages as dlc', { skip: hasDb ? false : 'data/elden-ring.db not present' }, () => {
   const db = openDb(DB_PATH, { readonly: true });
   const dlc = (db.prepare('SELECT count(*) AS n FROM pages WHERE dlc = 1').get() as { n: number }).n;
   const total = (db.prepare('SELECT count(*) AS n FROM pages').get() as { n: number }).n;
-  assert.ok(dlc >= 560, `expected at least 560 dlc pages, got ${dlc} of ${total}`);
-  assert.ok(dlc <= 680, `expected at most 680 dlc pages, got ${dlc} of ${total} - the inline-link-marker rule has probably regressed`);
+  assert.ok(dlc >= 716, `expected at least 716 dlc pages, got ${dlc} of ${total} - a marker spelling has probably stopped being read`);
+  assert.ok(dlc <= 796, `expected at most 796 dlc pages, got ${dlc} of ${total} - the predicate-form requirement has probably regressed`);
   db.close();
 });
 
@@ -76,14 +78,19 @@ test('the default mode answers about base-game pages and still gates dlc pages',
 });
 
 /**
- * Realm of Shadow is the DLC's own setting page. Its lead reads "is the setting of the DLC expansion
- * for {{ER}}, {{SotE}}" — a coordinate product TITLE, which the both-products rule cannot tell from a
- * genuine "in both games" claim, so it was demoted to base game. Corrected in the override file
- * rather than by tuning an already brittle regex, and pinned here so it cannot regress again.
+ * One pin per marker spelling the classifier has to read, so a rule that silently stops seeing one
+ * fails here by name rather than as a drift in the bounds test: {{in|se}} (Beast Claw (weapon)), the
+ * plain link (Great Katana) and the italicised link (Milady, Putrescent Knight). Cocoon of the
+ * Empyrean and Moangrave are DLC-only pages whose leads say "in {{ER}} and {{SotE}}" — no rule can
+ * tell that from a genuine both-products claim, so they are corrected in the override file.
+ * Realm of Shadow is the same story: its lead reads "the setting of the DLC expansion for {{ER}},
+ * {{SotE}}", a coordinate product TITLE, and it too lives in the override file.
  */
 test('known dlc pages are classified as dlc', { skip: hasDb ? false : 'data/elden-ring.db not present' }, () => {
   const db = openDb(DB_PATH, { readonly: true });
-  for (const title of ['Verdigris Armor', 'Messmer the Impaler', 'Scadu Altus', 'Rellana, Twin Moon Knight', 'Realm of Shadow']) {
+  for (const title of ['Verdigris Armor', 'Messmer the Impaler', 'Scadu Altus', 'Rellana, Twin Moon Knight', 'Realm of Shadow',
+    'Milady', 'Great Katana', 'Putrescent Knight', 'Backhand Blade', 'Midra, Lord of Frenzied Flame', 'Beast Claw (weapon)',
+    'Cocoon of the Empyrean', 'Moangrave']) {
     const row = db.prepare('SELECT dlc FROM pages WHERE title = ?').get(title) as { dlc: number } | undefined;
     assert.ok(row, `${title} must exist in the snapshot`);
     assert.equal(row.dlc, 1, `${title} must be classified as dlc`);
@@ -92,15 +99,19 @@ test('known dlc pages are classified as dlc', { skip: hasDb ? false : 'data/elde
 });
 
 /**
- * Every title here was labelled dlc by the shipped classifier before the inline-link-marker fix, and
- * each is a different shape of the same mistake: a {{SotE}} tagging a linked DLC item inside a
- * base-game list (Flask of Crimson Tears, Ash of War: Quickstep, Arcane) and a lead naming both
- * products (Starscourge Radahn, corrected through the override file). Under the old classifier
- * where_is("Flask of Crimson Tears") answered "is Shadow of the Erdtree content" with no opt-in.
+ * Every title here was labelled dlc by a shipped classifier at some point, and each is a different
+ * shape of the same mistake: a {{SotE}} tagging a linked DLC item inside a base-game list (Flask of
+ * Crimson Tears, Ash of War: Quickstep, Arcane), a lead naming both products (Statues, Bell Bearings;
+ * Starscourge Radahn corrected through the override file), a lead that negates ("not implemented in
+ * {{ER}} or {{SotE}}" — Unused Content), one that lists the products as coordinates (Godslayer
+ * Incantations, Death Sorcery, Paintings) and a patch note (Game Version/1.15). Under the old
+ * classifier where_is("Flask of Crimson Tears") answered "is Shadow of the Erdtree content" with no
+ * opt-in, and six base-game pages were hidden outright in the default mode.
  */
 test('base-game pages that merely link dlc items are not classified as dlc', { skip: hasDb ? false : 'data/elden-ring.db not present' }, () => {
   const db = openDb(DB_PATH, { readonly: true });
-  for (const title of ['Flask of Crimson Tears', 'Ash of War: Quickstep', 'Ash of War: Lion\'s Claw', 'Arcane', 'Ammunition', 'Katanas', 'Greataxes', 'Curved Sword Talisman', 'Bloodrose', 'Albinaurics', 'Sorcerers', 'Statues', 'Starscourge Radahn', 'Bell Bearings', 'Claw Talisman']) {
+  for (const title of ['Flask of Crimson Tears', 'Ash of War: Quickstep', 'Ash of War: Lion\'s Claw', 'Arcane', 'Ammunition', 'Katanas', 'Greataxes', 'Curved Sword Talisman', 'Bloodrose', 'Albinaurics', 'Sorcerers', 'Statues', 'Starscourge Radahn', 'Bell Bearings', 'Claw Talisman',
+    'Godslayer Incantations', 'Death Sorcery', 'Game Version/1.15', 'Paintings', 'Unused Content', 'Works and Adaptations']) {
     const row = db.prepare('SELECT dlc FROM pages WHERE title = ?').get(title) as { dlc: number } | undefined;
     assert.ok(row, `${title} must exist in the snapshot`);
     assert.equal(row.dlc, 0, `${title} is base-game content and must not be dlc-gated by default`);

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { classifyDlc, classifyPage, loadOverrides, type Overrides } from '../src/extract/dlc.js';
+import { classifyDlc, classifyPage, DLC_SIGNALS, loadOverrides, type Overrides } from '../src/extract/dlc.js';
 import { runExtractors } from '../src/extract/run.js';
 import type { PageRow } from '../src/extract/types.js';
 import { memoryDb } from './helpers.js';
@@ -104,9 +104,50 @@ test('the lead forms real dlc pages use still classify as dlc', () => {
   }
 });
 
+test('the {{in|se}} and {{in|sote}} spellings mark a page as dlc', () => {
+  for (const wikitext of ["The '''Beast Claw''' is a [[Beast Claws|Beast Claw]], a [[Melee Armaments|melee armament]] {{in|se}}.\n\n==Notes==", "'''Milady''' is a [[Light Greatsword]] {{in|SotE}}.\n\n==Notes=="]) {
+    const result = classifyPage(page('X', wikitext), ctx());
+    assert.equal(result.dlc, true, wikitext);
+    assert.deepEqual(result.signals, ['sote_template']);
+  }
+});
+
+test('a plain link in predicate form marks a page as dlc with its own signal', () => {
+  const result = classifyPage(page('Great Katana', "The '''Great Katana''' is a [[Great Katanas|Great Katana]] in [[Elden Ring: Shadow of the Erdtree]].\n\n==Notes=="), ctx());
+  assert.equal(result.dlc, true);
+  assert.deepEqual(result.signals, ['sote_link']);
+});
+
+// The wiki italicises a product title, so the link form almost always arrives wrapped. Milady,
+// Putrescent Knight and Needle Knight Leda are all this shape and all served as base without it.
+test('the link form is still read when the wiki italicises the product title', () => {
+  for (const wikitext of [
+    "'''Milady''' is a [[Melee Armaments|melee armament]] in ''[[Elden Ring: Shadow of the Erdtree]]''.\n\n== Description ==",
+    "'''Needle Knight Leda''' is an [[NPC]] in <i>[[Elden Ring: Shadow of the Erdtree]]</i>.\n\n==Overview==",
+  ]) {
+    const result = classifyPage(page('X', wikitext), ctx());
+    assert.equal(result.dlc, true, wikitext);
+    assert.deepEqual(result.signals, ['sote_link']);
+  }
+});
+
+test('a lead that only mentions the DLC in passing does not make the page dlc', () => {
+  const leads = [
+    "'''Godslayer Incantations''' are a group of six [[Incantations]] in {{ER}} and {{ERN}}. Boosted by [[Godslayer's Seal]] {{SotE}} too.",
+    "'''Unused content''' refers to data not fully implemented in {{ER}} or {{SotE}}.",
+    "'''Paintings''' are [[Info Items]] in {{ER}} and {{ER}}<i>:</i> {{SotE}}.",
+    "'''Version 1.15''' was released for {{ER}} on PC. It also patched {{SotE}}.",
+  ];
+  for (const wikitext of leads) {
+    const result = classifyPage(page('X', wikitext + '\n\n==Notes=='), ctx());
+    assert.equal(result.dlc, false, wikitext);
+    assert.equal(result.hasDlcSections, true, wikitext);
+  }
+});
+
 // has_dlc_sections existed but only the override branch could ever set it, which made it a restatement
-// of the override file. With the inline and below-lead rules it means what the spec says: a base-game
-// page whose text discusses the DLC.
+// of the override file. With the lead-predicate rule it means what the spec says: a base-game page
+// whose text discusses the DLC.
 test('a base page keeps has_dlc_sections without any override', () => {
   const result = classifyPage(page('Arcane', "'''Arcane''' is a [[stat]].\n*[[Circlet of Light]]{{SOTE}}: increases Arcane.\n\n==Notes=="), ctx());
   assert.equal(result.dlc, false);
@@ -223,7 +264,7 @@ test('classifyDlc records ambiguous pages without marking them dlc', () => {
 
 test('classifyDlc writes a dlc_report row per signal', () => {
   const db = memoryDb();
-  insert(db, 'Verdigris Armor', '{{SotE}}');
+  insert(db, 'Verdigris Armor', 'The Verdigris Armor is [[Chest Armor]] in {{SotE}}.');
   classifyDlc(db, { overrides: { dlc: [], base: [] }, now: () => new Date('2026-09-15T00:00:00.000Z') });
   const rows = db.prepare('SELECT signal, hits, at FROM dlc_report ORDER BY signal').all() as { signal: string; hits: number; at: string }[];
   assert.ok(rows.some((r) => r.signal === 'sote_template' && r.hits === 1));
@@ -232,11 +273,11 @@ test('classifyDlc writes a dlc_report row per signal', () => {
 
 test('classifyDlc is idempotent', () => {
   const db = memoryDb();
-  insert(db, 'Verdigris Armor', '{{SotE}}');
+  insert(db, 'Verdigris Armor', 'The Verdigris Armor is [[Chest Armor]] in {{SotE}}.');
   const first = classifyDlc(db, { overrides: { dlc: [], base: [] } });
   const second = classifyDlc(db, { overrides: { dlc: [], base: [] } });
   assert.deepEqual(first.bySignal, second.bySignal);
-  assert.equal((db.prepare('SELECT count(*) AS n FROM dlc_report').get() as { n: number }).n, second.pages > 0 ? 5 : 0);
+  assert.equal((db.prepare('SELECT count(*) AS n FROM dlc_report').get() as { n: number }).n, second.pages > 0 ? DLC_SIGNALS.length : 0);
 });
 
 test('classification survives a re-extract', () => {
