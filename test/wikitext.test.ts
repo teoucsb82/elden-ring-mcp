@@ -76,8 +76,29 @@ A Magma Wyrm is encountered in a lava pool near [[Fort Laiedd]].
   assert.match(sections[1].markdown, /Fort Laiedd/);
 });
 
-test('a lone pipe-dash line inside prose is not mistaken for a tab', () => {
-  assert.match(wikitextToMarkdown('Deals 10 |-| 20 damage.'), /Deals 10 \|-\| 20 damage\./);
+test('a line starting with |-| but carrying no label is not turned into a heading', () => {
+  const markdown = wikitextToMarkdown('|-| stray marker with no equals\nOrdinary prose.');
+  assert.doesNotMatch(markdown, /^#/m);
+  assert.match(markdown, /^\|-\| stray marker with no equals$/m);
+});
+
+// </tabber> ends the tabbed region. Prose after it belongs to the enclosing section, not to the
+// last tab, or boss/search will quote unrelated text as that tab's content.
+test('prose after </tabber> is not attributed to the last tab', () => {
+  const sections = splitSections(wikitextToMarkdown(`==Bosses==
+<tabber>
+|-|Magma Wyrm Makar=
+Makar blocks the path to the Altus Plateau.
+|-|Mt. Gelmir=
+A Magma Wyrm waits in a lava pool near Fort Laiedd.
+</tabber>
+All Magma Wyrms drop a Dragon Heart.`));
+  const makar = sections.find((s) => s.heading === 'Magma Wyrm Makar')!;
+  const gelmir = sections.find((s) => s.heading === 'Mt. Gelmir')!;
+  assert.doesNotMatch(makar.markdown, /Dragon Heart/);
+  assert.doesNotMatch(gelmir.markdown, /Dragon Heart/, 'trailing prose was filed under the last tab');
+  assert.equal(gelmir.markdown, 'A Magma Wyrm waits in a lava pool near Fort Laiedd.');
+  assert.ok(sections.some((s) => s.heading === 'Bosses' && /Dragon Heart/.test(s.markdown)), 'trailing prose should return to the enclosing section');
 });
 
 // Location pages write the same tab label across two lines, which the single-line form missed.

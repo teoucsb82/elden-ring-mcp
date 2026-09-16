@@ -37,14 +37,32 @@ export function search(dbs: Dbs, query: string, limit = 10) {
   return { results: results.slice(0, limit) };
 }
 
+/**
+ * A redirect fragment can name a heading that carries no text of its own — on the ~371 pages whose
+ * sections are Fandom <tabber> scaffolding, the fragment's section is empty and dropped. Prefer the
+ * fragment, but fall back to the page rather than return an OK-looking answer with no sections, and
+ * say which happened so a caller can tell fragment prose from page prose.
+ */
+function withFragment<T extends object>(r: Resolved, fragmentSections: SectionOut[], fallback: () => SectionOut[], rest: T) {
+  if (!r.fragment) return { provenance: r.provenance, match: r.match, ...rest, sections: fragmentSections };
+  const matched = fragmentSections.length > 0;
+  return {
+    provenance: r.provenance, match: r.match, ...rest,
+    fragment: r.fragment, fragment_matched: matched,
+    sections: matched ? fragmentSections : fallback(),
+  };
+}
+
 export function getPage(dbs: Dbs, title: string, section?: string) {
   const r = resolveName(dbs, title);
   if (!r) return notFound(title);
-  const heading = section ? new RegExp(escapeRegex(section), 'i') : r.fragment ? new RegExp(`^${escapeRegex(r.fragment)}$`, 'i') : undefined;
-  const sections = sectionsOf(r, heading);
-  // An asked-for section that matches nothing is a miss, not an empty page.
-  if (section && !sections.length) return notFound(title);
-  return { provenance: r.provenance, match: r.match, sections };
+  if (section) {
+    const sections = sectionsOf(r, new RegExp(escapeRegex(section), 'i'));
+    // An asked-for section that matches nothing is a miss, not an empty page.
+    return sections.length ? { provenance: r.provenance, match: r.match, sections } : notFound(title);
+  }
+  const fragmentSections = r.fragment ? sectionsOf(r, new RegExp(`^${escapeRegex(r.fragment)}$`, 'i')) : [];
+  return withFragment(r, fragmentSections, () => sectionsOf(r), {});
 }
 
 /** Stored prereqs are always a JSON array, but a malformed row must not take the whole answer down. */
@@ -135,11 +153,8 @@ export function bossInfo(dbs: Dbs, name: string) {
   if (!r) return notFound(name);
   const boss = (r.db.prepare('SELECT name, location, hp, runes, drops FROM bosses WHERE page_id = ?').get(r.pageId) as Record<string, unknown> | undefined) ?? null;
   const usual = /overview|location|strateg|weakness|resist/i;
-  // A redirect fragment can name a heading that holds only a <tabber> and so carries no text of its
-  // own. Prefer the fragment, but never answer with no sections when the page has usable ones.
-  const fragmentSections = r.fragment ? sectionsOf(r, new RegExp(`^${escapeRegex(r.fragment)}$`, 'i')) : [];
-  const sections = fragmentSections.length ? fragmentSections : sectionsOf(r, usual);
-  return { provenance: r.provenance, match: r.match, boss, sections };
+  const fragmentSections = r.fragment ? sectionsOf(r, new RegExp(`^${escapeRegex(r.fragment)}$`, 'i')) : sectionsOf(r, usual);
+  return withFragment(r, fragmentSections, () => sectionsOf(r, usual), { boss });
 }
 
 export function sourcesStatus(dbs: Dbs) {

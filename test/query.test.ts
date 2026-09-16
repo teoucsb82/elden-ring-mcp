@@ -80,6 +80,31 @@ test('bossInfo falls back to the usual sections when the redirect fragment names
   assert.equal(result.boss.hp, '2,204');
   assert.ok(result.sections.length > 0, 'expected a fallback section, got none');
   assert.deepEqual(result.sections.map((s: any) => s.heading), ['Overview']);
+  assert.equal(result.fragment, 'Bosses');
+  assert.equal(result.fragment_matched, false);
+});
+
+test('bossInfo reports a fragment that did match', () => {
+  const result = bossInfo(dbs(), 'Magma Wyrm Makar') as any;
+  assert.equal(result.fragment, 'Overview');
+  assert.equal(result.fragment_matched, true);
+});
+
+// getPage had the same hole as bossInfo: on the ~371 tabber pages a redirect fragment can name a
+// heading that now carries no text, which returned an OK-looking answer with no sections at all.
+test('getPage falls back to the whole page when the redirect fragment names no section', () => {
+  const db = buildFixtureDb();
+  replaceRedirects(db, 'fandom', [{ from: 'Magma Wyrm Makar', to: 'Red Wolf of Radagon', fragment: 'Bosses' }]);
+  const result = getPage({ shipped: db, local: null }, 'Magma Wyrm Makar') as any;
+  assert.equal(result.match, 'redirect');
+  assert.ok(result.sections.length > 0, 'expected the page sections, got none');
+  assert.equal(result.fragment, 'Bosses');
+  assert.equal(result.fragment_matched, false);
+});
+
+test('getPage still reports not_found for an explicitly requested section that does not exist', () => {
+  const result = getPage(dbs(), "Azur's Glintstone Staff", 'Nonexistent Section') as any;
+  assert.equal(result.not_found, true);
 });
 
 test('sourcesStatus reports sync and counts', () => {

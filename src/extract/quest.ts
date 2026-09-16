@@ -1,5 +1,5 @@
 import { findInfobox } from '../wikitext/infobox.js';
-import { sectionMarkdowns, text } from './common.js';
+import { matchingSections, text } from './common.js';
 import type { Extractor } from './types.js';
 
 export interface QuestStep {
@@ -34,13 +34,16 @@ export function parseQuestSteps(markdown: string): QuestStep[] {
   return steps
     .map(({ nested, ...step }) => {
       if (nested || !step.location) return step;
-      // Flat item: its text is the step, not a heading for bullets that never came.
+      // Flat item: its text is the step, not a heading for bullets that never came. A step that only
+      // warns still has to say what to do, so a breaker keeps the sentence in both fields.
       const sentence = step.location;
       return BREAK_PATTERN.test(sentence)
-        ? { ...step, location: null, breaks_quest: sentence }
+        ? { ...step, location: null, action: sentence, breaks_quest: sentence }
         : { ...step, location: null, action: sentence };
     })
-    .filter((step) => step.action || step.breaks_quest);
+    .filter((step) => step.action || step.breaks_quest)
+    // Dropped items must not leave gaps: step_ord is what callers count and order by.
+    .map((step, index) => ({ ...step, step_ord: index + 1 }));
 }
 
 /**
@@ -49,6 +52,9 @@ export function parseQuestSteps(markdown: string): QuestStep[] {
  */
 const QUEST_HEADING = /^(?:.*['’]s )?quest(?:line)?s?(?: (?:progression|steps|walkthrough))?$/i;
 
+/** A heading that names the progression outranks a bare "Quests" section that only links to it. */
+const EXPLICIT_HEADING = /\b(progression|steps|walkthrough)\b/i;
+
 /** NPCs with questlines are not always "Infobox Character": Patches is a Boss, invaders are Enemies. */
 const NPC_INFOBOXES = ['Infobox Character', 'Infobox Enemy', 'Infobox Boss'];
 
@@ -56,8 +62,14 @@ export const questExtractor: Extractor = {
   name: 'quest',
   matches: (page) => !!page.wikitext && findInfobox(page.wikitext, NPC_INFOBOXES) !== null,
   write(db, page) {
-    // A page can carry a "Quests" stub before its real "Questline steps"; take the first that parses.
-    const steps = sectionMarkdowns(db, page.id, QUEST_HEADING).map(parseQuestSteps).find((parsed) => parsed.length > 0);
+    // A page often carries a bare "Quests" stub that only links the questline, ahead of the section
+    // with the real steps. Since a flat "#" list parses, the stub parses too, so rank rather than
+    // take the first: an explicit progression/steps heading wins, then the longer questline.
+    const candidates = matchingSections(db, page.id, QUEST_HEADING)
+      .map((section) => ({ explicit: EXPLICIT_HEADING.test(section.heading), steps: parseQuestSteps(section.markdown) }))
+      .filter((candidate) => candidate.steps.length > 0)
+      .sort((a, b) => Number(b.explicit) - Number(a.explicit) || b.steps.length - a.steps.length);
+    const steps = candidates[0]?.steps;
     if (!steps) return;
     const npc = text(findInfobox(page.wikitext!, NPC_INFOBOXES)!.params.title) ?? page.title;
     const insert = db.prepare('INSERT INTO quests (page_id, npc, step_ord, location, action, breaks_quest) VALUES (?, ?, ?, ?, ?, ?)');

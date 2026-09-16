@@ -7,7 +7,7 @@ import { parseAcquisition } from '../src/extract/acquisition.js';
 import { parseQuestSteps } from '../src/extract/quest.js';
 import { wikitextToMarkdown } from '../src/wikitext/markdown.js';
 import { splitSections } from '../src/wikitext/sections.js';
-import { AZUR_CROWN, AZUR_STAFF, ELEONORA_QUEST, LEDA_FLAT_QUEST, PATCHES_QUEST, RED_WOLF, SELLEN_QUEST, YMIR_QUEST } from './fixtures/wikitext.js';
+import { AZUR_CROWN, AZUR_STAFF, ELEONORA_QUEST, LEDA_FLAT_QUEST, PATCHES_QUEST, RED_WOLF, SELLEN_QUEST, STUB_THEN_STEPS, YMIR_QUEST } from './fixtures/wikitext.js';
 
 const section = (wikitext: string, heading: string) => splitSections(wikitextToMarkdown(wikitext)).find((s) => s.heading === heading)!.markdown;
 
@@ -77,8 +77,17 @@ test('quest steps: a flat numbered list has no nested bullets, so each item is i
   assert.equal(steps[0].location, null);
   assert.match(steps[0].action, /^Defeat both Starscourge Radahn and Mohg/);
   assert.equal(steps[1].step_ord, 2);
-  assert.equal(steps[2].action, '');
+  // A flat step that is only a quest-breaker still has to say what to do, so it keeps the sentence
+  // in both fields rather than reading as an empty action.
+  assert.match(steps[2].action, /will fail the questline/);
   assert.match(String(steps[2].breaks_quest), /will fail the questline/);
+});
+
+test('quest steps: step_ord is contiguous after unparsed items are dropped', () => {
+  // The first item is empty, so it is dropped; the survivors must still be numbered 1, 2.
+  const steps = parseQuestSteps('1. \n1. Liurnia\n  - Speak to her.\n1. Altus Plateau\n  - Hand over the ring.');
+  assert.deepEqual(steps.map((s) => s.location), ['Liurnia', 'Altus Plateau']);
+  assert.deepEqual(steps.map((s) => s.step_ord), [1, 2]);
 });
 
 test('quest steps: a flat item does not swallow the structured item that follows it', () => {
@@ -99,6 +108,16 @@ test('quest extractor accepts "Questline steps" and "<NPC>\'s Quest" headings bu
   assert.match(rows[1].action, /Ring the bell/);
   // "Quest items" is an item list, not steps: it must not be picked as the questline section.
   assert.ok(!rows.some((r) => /Hole-Laden Necklace/.test(r.location ?? '')));
+});
+
+test('a bare "Quests" stub does not outrank the section holding the real steps', () => {
+  const db = memoryDb();
+  upsertPage(db, { source: 'fandom', title: 'Jolán, Swordhand of Night', url: 'u', revid: 1, fetchedAt: '2026-09-15T00:00:00.000Z', wikitext: STUB_THEN_STEPS, markdown: null, license: 'l' });
+  runExtractors(db);
+  const rows = db.prepare('SELECT location, action FROM quests WHERE npc = ? ORDER BY step_ord').all('Jolán, Swordhand of Night') as { location: string; action: string }[];
+  assert.equal(rows.length, 3, 'expected the three real steps, not the one-line stub');
+  assert.deepEqual(rows.map((r) => r.location), ['Cathedral of Manus Metyr', 'Finger Ruins of Rhia', "Taylew's Ruined Forge"]);
+  assert.ok(!rows.some((r) => /questline$/.test(r.action)), 'the stub link was taken as a step');
 });
 
 test('quest extractor covers NPCs whose page uses Infobox Boss or Infobox Enemy', () => {

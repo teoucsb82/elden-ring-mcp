@@ -175,6 +175,26 @@ export const ELEONORA_QUEST = `{{Infobox Enemy
 #*Use the summon sign to invade and defeat Eleonora for the [[Bloody Helice]].
 `;
 
+// A bare "Quests" section that only links the questline, ahead of the real steps. Now that flat "#"
+// lists parse, the stub parses too and must not outrank the section that holds the actual steps.
+export const STUB_THEN_STEPS = `{{Infobox Character
+|title = Jolán, Swordhand of Night
+|role = NPC
+}}
+'''Jolán''' is an [[NPC]] in {{ER}}.
+
+==Quests==
+#[[Count Ymir]]'s questline
+
+===Questline steps===
+#[[Cathedral of Manus Metyr]]
+#*Speak with Jolán to receive the [[Swordhand of Night Jolán]] ashes.
+#[[Finger Ruins of Rhia]]
+#*Follow Jolán through the ruins.
+#[[Taylew's Ruined Forge]]
+#*Defeat Jolán to obtain her [[Night Sorceries]].
+`;
+
 export const MALFORMED = `{{Infobox Weapon
 | title = Broken Page
 | int_req = 12
