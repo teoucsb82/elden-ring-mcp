@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS dlc_report (
   hub pages, and on any base-game page whose wikitext carries a `{{SotE}}`
   marker the classifier read as a reference rather than a claim about the page's
   own subject: `Flask of Crimson Tears`, `Arcane`, `Ash of War: Quickstep`, and
-  244 others (247 counting the hub pages). It is *not* set on pages that discuss DLC events in prose without
+  243 others (246 counting the hub pages). It is *not* set on pages that discuss DLC events in prose without
   the template — `Great Runes` describes Miquella breaking his rune in the Land
   of Shadow but uses no `{{SotE}}`, so it stays 0. The flag tracks the marker,
   not the subject matter; nothing detects the latter.
@@ -112,12 +112,14 @@ Signals evaluated in precedence order. First match wins.
 1. **Override file** — `data/dlc-overrides.json`:
    ```json
    {
-     "dlc":  ["Rellana, Twin Moon Knight"],
-     "base": ["Weapons", "Armor Sets", "Armor", "Talismans"]
+     "dlc":  ["Rellana, Twin Moon Knight", "Realm of Shadow"],
+     "base": ["Weapons", "Armor Sets", "Armor", "Talismans", "Starscourge Radahn"]
    }
    ```
    Absolute. Short-circuits every other signal. This is where human judgment
-   lands, and the only place it lands.
+   lands, and the only place it lands. Each list now carries two kinds of entry:
+   pages no signal reaches (`Rellana`), and pages a signal gets wrong
+   (`Realm of Shadow`, `Starscourge Radahn` — see signal 3).
 
 2. **Hub-page exclusion** — the page is an index or list page: its title is a
    bare category noun, or its wikitext is dominated by list/gallery markup.
@@ -143,6 +145,15 @@ Signals evaluated in precedence order. First match wins.
 
    An excluded page is base game *and* carries `has_dlc_sections`. The text is
    never withheld; the answer is caveated.
+
+   The third exclusion is the brittle one, and the override file is its backstop.
+   It cannot tell a coordinate *list* of products from a coordinate product
+   *title*: `Realm of Shadow` — the DLC's own setting page — reads "is the
+   setting of the DLC expansion for `{{ER}}`, `{{SotE}}`" and was demoted to base
+   game, so it is forced back in the override file's `dlc` list.
+   `Rakshasa Armor` ("in `{{ER}}`, included in the `{{SotE}}` DLC") survives only
+   because "included" is not in the rule's filler-word set. Widen the rule and
+   expect more casualties; correct them in the override file, not the regex.
 
 4. **Title suffix** — title ends with `(Shadow of the Erdtree)`.
 
@@ -294,27 +305,40 @@ Tests:
   automatic signal is complete. The coverage report and the override file are
   the mechanism for converging on correctness, not a promise of day-one
   accuracy.
-- **Measured coverage (2026-09-16):** the classifier labels 618 of 4,922 pages
+- **Measured coverage (2026-09-16):** the classifier labels 619 of 4,922 pages
   as DLC, by signal: sote_template=598, title_suffix=22, category=0,
-  hub_page=12, override=1 (a page can carry more than one signal, so these do
-  not sum to 618). 247 base-game pages are flagged `has_dlc_sections`. These
+  hub_page=12, override=2 (a page can carry more than one signal, so these do
+  not sum to 619). 246 base-game pages are flagged `has_dlc_sections`. These
   replace the 2026-09-15 figures (857 DLC, 8 flagged), which counted the
   inline-link-marker false positives described in §2 signal 3.
   `category=0` because `dlc_categories` is empty in the local database — it has
   not been synced since the category crawl was added, so the category signal has
   never fired on real data, only in synthetic unit tests.
-- **Measured false negatives: 167 pages.** The wiki marks the DLC three ways and
-  the classifier reads one of them. 81 base-labelled pages carry `{{in|SotE}}`
-  or `{{in|se}}` — the same marker template under a different invocation — and
-  87 carry a plain `[[Elden Ring: Shadow of the Erdtree]]` link instead of any
-  template; 167 pages match one or the other. Every one of them is DLC content
-  that base mode now serves and labels `dlc: false`: `Milady`, `Backhand Blade`,
-  `Great Katana`, `Midra, Lord of Frenzied Flame`, `Putrescent Knight`,
-  `Needle Knight Leda`, `Bloodfiend's Fork`, `Black Steel Twinblade`. This is
-  pre-existing — no signal ever read those forms — and unaddressed. Adding
-  `{{in|SotE}}` as a fourth exclusion-aware spelling of signal 3 is the obvious
-  next step; the plain-link form is a genuinely new signal and needs its own
-  measurement.
+- **False negatives: at least 214 pages, true count unmeasured.** DLC pages the
+  classifier labels base game, so base mode serves them labelled `dlc: false`.
+  Two independent techniques, each a floor and neither a total:
+  - *Alternate marker spellings — 167 pages.* 81 base-labelled pages carry
+    `{{in|SotE}}` or `{{in|se}}`, the same marker template under a different
+    invocation, and 87 carry a plain `[[Elden Ring: Shadow of the Erdtree]]`
+    link instead of any template; 167 match one or the other. `Milady`,
+    `Backhand Blade`, `Great Katana`, `Midra, Lord of Frenzied Flame`,
+    `Putrescent Knight`, `Needle Knight Leda`, `Bloodfiend's Fork`.
+  - *No marker at all — at least 47 further pages.* Cross-checking the 22 DLC
+    index pages' own outgoing links finds pages carrying no DLC marker in any
+    spelling: `Rellana's Twin Blades` (whose lead says "featured in `{{ER}}`", a
+    wiki error), `Star-Lined Sword`, `Curseblade's Cirque`, `Spear of the
+    Impaler`, `Golem Fist`, `Devonia's Hammer`, `Ansbach's Longbow`,
+    `Divine Beast Tornado`, `Remembrance of the Lord of Frenzied Flame`. No
+    wikitext signal can reach these; only category membership or the index
+    crawl can.
+
+  214 is the sum of two floors found by two techniques, not a count: nothing has
+  enumerated the DLC's true page set, so the real figure is unknown and larger.
+  All of this is pre-existing — no signal ever read those forms — and
+  unaddressed. Adding `{{in|SotE}}` as a further spelling of signal 3 is the
+  cheapest next step; the plain-link form is a new signal needing its own
+  measurement; the unmarked pages need signal 5 (DLC category membership) to
+  actually fire, which it never has.
 - **Accuracy is spot-checked, not measured.** `test/dlc-coverage.test.ts` pins
   four known-hub pages, six known-DLC pages, three known-base pages and fifteen
   former false positives against the shipped snapshot, plus a two-sided bound on
