@@ -68,3 +68,11 @@ CREATE TABLE IF NOT EXISTS extract_failures (
 CREATE TABLE IF NOT EXISTS sync_state (
   source TEXT PRIMARY KEY, last_run TEXT NOT NULL, pages INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS dlc_report (
+  signal TEXT NOT NULL,
+  hits INTEGER NOT NULL,
+  at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dlc_categories (
+  title TEXT PRIMARY KEY
+);
