@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { diffSnapshots, formatChangelog, snapshotRows } from '../src/changelog.js';
 import { openDb } from '../src/db/open.js';
+import { classifyDlc } from '../src/extract/dlc.js';
 import { runExtractors } from '../src/extract/run.js';
 import { createFandom } from '../src/sources/fandom.js';
 import { DEFAULT_DB_PATH } from '../src/store/pages.js';
@@ -24,5 +25,11 @@ const [title, intro, ...rest] = readFileSync(CHANGELOG, 'utf8').split('\n\n');
 const entry = formatChangelog(date, sync, diff, extract.failures.length).trimEnd();
 writeFileSync(CHANGELOG, [title, intro, entry, ...rest].join('\n\n'));
 console.log(JSON.stringify({ touched: touched.length, rows: extract.rows, failures: extract.failures.length, fieldChanges: diff.changed.length }));
+
+const dlc = classifyDlc(db);
+console.log(`dlc: ${dlc.dlc}/${dlc.pages} pages, ${dlc.hasDlcSections} base pages mention DLC`);
+console.log(`signals: ${Object.entries(dlc.bySignal).map(([signal, hits]) => `${signal}=${hits}`).join(' ')}`);
+if (dlc.ambiguous.length) console.log(`ambiguous (candidates for data/dlc-overrides.json): ${dlc.ambiguous.slice(0, 20).join(', ')}`);
+
 db.exec('VACUUM');
 db.close();
