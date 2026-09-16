@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { Db } from '../db/open.js';
 import type { PageRow } from './types.js';
 
-export type DlcSignal = 'override' | 'hub_page' | 'sote_template' | 'sote_link' | 'title_suffix' | 'category';
+export type DlcSignal = 'override' | 'hub_page' | 'sote_template' | 'sote_link' | 'title_suffix' | 'category' | 'index_link';
 
 export interface Classification {
   dlc: boolean;
@@ -110,10 +110,118 @@ export function soteMentions(wikitext: string): SoteMentions {
   };
 }
 
+/** `[[Target]]`, `[[Target|label]]`, `[[Target#frag]]` — group 1 is the target, without fragment or label. */
+const WIKI_LINK = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g;
+/** MediaWiki titles are case-insensitive in the first character only, and treat `_` as a space. */
+const normaliseTitle = (raw: string): string => {
+  const t = raw.replace(/_/g, ' ').trim();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
+const HEADING = /^[ \t]*=+\s*(.*?)\s*=+[ \t]*$/;
+/** A footer of sibling indexes and other games — "Nightreign Enemies" is not DLC content. */
+const SEE_ALSO = /see\s+also/i;
+/** Any DLC marker template, used here to read a per-entry tag rather than a claim about a subject. */
+const ENTRY_MARKER = new RegExp(`${SOTE}|${IN_SE}`, 'i');
+
+/**
+ * A per-entry tag: a link, then a marker, on one line — `* [[Bigmouth Imp]] {{SOTE}}`. It is how an
+ * index page that enumerates BOTH the DLC's own content and the base-game content the DLC reuses
+ * says which is which.
+ */
+const taggedEntry = (line: string): boolean => {
+  const link = line.indexOf('[[');
+  if (link < 0) return false;
+  const marker = ENTRY_MARKER.exec(line);
+  return marker !== null && marker.index > link;
+};
+
+interface IndexLine {
+  line: string;
+  /** Everything before the first `==`: a statement about the page, never a per-entry tag. */
+  isLead: boolean;
+}
+
+/** Splits an index page into taggable lines, dropping its "See Also" footer entirely. */
+function indexLines(wikitext: string): IndexLine[] {
+  const out: IndexLine[] = [];
+  let isLead = true;
+  let skipping = false;
+  for (const line of wikitext.split('\n')) {
+    const heading = HEADING.exec(line);
+    if (heading) {
+      isLead = false;
+      skipping = SEE_ALSO.test(heading[1]);
+      continue;
+    }
+    if (!skipping) out.push({ line, isLead });
+  }
+  return out;
+}
+
+/** What one index page contributed, so a page that silently goes quiet is visible in the run output. */
+export interface IndexLinkStat {
+  title: string;
+  /** Links that survived every filter and became DLC titles. */
+  kept: number;
+  /** Links seen on the page, excluding its See Also footer. */
+  links: number;
+  /** Whether the page tags its own entries inline, and so contributed only the tagged ones. */
+  tagged: boolean;
+}
+
+/**
+ * The DLC's own index pages ("Weapons (Shadow of the Erdtree)", …) enumerate its content. A link
+ * from one is the only signal that reaches pages the wiki never marked — Rellana's Twin Blades says
+ * "featured in {{ER}}". Hub targets come from the override base list, never a heuristic.
+ *
+ * Some of the 22 indexes list the base game as well as the DLC, and reading every link on them put 65
+ * base-game pages behind the DLC gate: "Enemies (Shadow of the Erdtree)" names every enemy the DLC
+ * contains, Basilisk and Wolf included. Such a page says which is which by tagging the DLC's own
+ * entries inline, so when a page tags any of its entries, only its tagged entries count. On this
+ * snapshot exactly two pages do that: "Enemies (Shadow of the Erdtree)", where the rule is what keeps
+ * 61 base-game creatures out, and the "Incantations (Shadow of the Erdtree)" gallery, which tags
+ * every entry it has and so loses only its own hub link to the rule. A page that tags none — the
+ * other galleries, which list DLC additions and nothing else — still contributes every link.
+ * ("Bosses (Shadow of the Erdtree)" tags nothing: the base bosses it reuses as DLC field bosses are
+ * handled by the See Also skip and by the override file.)
+ *
+ * The lead is excluded from that test on purpose: "This page lists [[Tools]] ... added in the
+ * {{SotE}} expansion" is a claim about the page, not a tag on an entry, and reading it as one would
+ * silence the whole Tools index. Because the rule is all-or-nothing per page, one new inline tag on
+ * an untagged gallery would silence the rest of it — which is why every index reports what it kept.
+ */
+export function indexLinkedTitles(pages: PageRow[], overrides: Overrides, stats?: IndexLinkStat[]): Set<string> {
+  const forcedBase = lowerSet(overrides.base);
+  const titles = new Set<string>();
+  for (const index of pages) {
+    if (!TITLE_SUFFIX.test(index.title)) continue;
+    const lines = indexLines(index.wikitext ?? '');
+    const tagsItsEntries = lines.some((l) => !l.isLead && taggedEntry(l.line));
+    const stat: IndexLinkStat = { title: index.title, kept: 0, links: 0, tagged: tagsItsEntries };
+    for (const { line } of lines) {
+      const contributes = !tagsItsEntries || taggedEntry(line);
+      for (const m of line.matchAll(WIKI_LINK)) {
+        stat.links++;
+        if (!contributes) continue;
+        const target = normaliseTitle(m[1]);
+        // A `:` means a namespace (File:, Category:) or the expansion's own article, never DLC content.
+        if (target.includes(':') || TITLE_SUFFIX.test(target) || forcedBase.has(target.toLowerCase())) continue;
+        stat.kept++;
+        titles.add(target);
+      }
+    }
+    stats?.push(stat);
+  }
+  return titles;
+}
+
 export interface ClassifyContext {
   overrides: Overrides;
   /** Titles reachable from Category:Shadow of the Erdtree and its subcategories. */
   dlcCategoryTitles: Set<string>;
+  /** Titles linked from a `… (Shadow of the Erdtree)` index page: see indexLinkedTitles. */
+  indexLinkedTitles: Set<string>;
 }
 
 /**
@@ -139,6 +247,7 @@ export function classifyPage(page: PageRow, ctx: ClassifyContext): Classificatio
   if (linkMarker) signals.push('sote_link');
   if (TITLE_SUFFIX.test(page.title)) signals.push('title_suffix');
   if (ctx.dlcCategoryTitles.has(page.title)) signals.push('category');
+  if (ctx.indexLinkedTitles.has(page.title)) signals.push('index_link');
 
   const dlc = signals.length > 0;
   // A base page may legitimately mention the DLC — an inline tag on a linked item, a trivia note.
@@ -146,7 +255,7 @@ export function classifyPage(page: PageRow, ctx: ClassifyContext): Classificatio
   return { dlc, signals, hasDlcSections: !dlc && mentionsDlc };
 }
 
-export const DLC_SIGNALS: DlcSignal[] = ['override', 'hub_page', 'sote_template', 'sote_link', 'title_suffix', 'category'];
+export const DLC_SIGNALS: DlcSignal[] = ['override', 'hub_page', 'sote_template', 'sote_link', 'title_suffix', 'category', 'index_link'];
 
 export interface DlcReport {
   pages: number;
@@ -155,6 +264,8 @@ export interface DlcReport {
   bySignal: Record<DlcSignal, number>;
   /** Base-game pages that nonetheless mention DLC content: the queue for the override file. */
   ambiguous: string[];
+  /** One row per DLC index page: see IndexLinkStat, and indexLinkedTitles for why it is worth printing. */
+  indexPages: IndexLinkStat[];
 }
 
 /**
@@ -165,11 +276,13 @@ export function classifyDlc(db: Db, opts: { overrides?: Overrides; now?: () => D
   const overrides = opts.overrides ?? loadOverrides();
   const now = opts.now ?? (() => new Date());
   const dlcCategoryTitles = new Set((db.prepare('SELECT title FROM dlc_categories').all() as { title: string }[]).map((r) => r.title));
-  const ctx: ClassifyContext = { overrides, dlcCategoryTitles };
 
   const pages = db.prepare('SELECT id, source, title, wikitext FROM pages ORDER BY id').all() as PageRow[];
+  // Whole-corpus pass: the index pages have to be read before any page can be classified against them.
+  const indexPages: IndexLinkStat[] = [];
+  const ctx: ClassifyContext = { overrides, dlcCategoryTitles, indexLinkedTitles: indexLinkedTitles(pages, overrides, indexPages) };
   const bySignal = Object.fromEntries(DLC_SIGNALS.map((s) => [s, 0])) as Record<DlcSignal, number>;
-  const report: DlcReport = { pages: pages.length, dlc: 0, hasDlcSections: 0, bySignal, ambiguous: [] };
+  const report: DlcReport = { pages: pages.length, dlc: 0, hasDlcSections: 0, bySignal, ambiguous: [], indexPages };
 
   const update = db.prepare('UPDATE pages SET dlc = ?, dlc_signals = ?, has_dlc_sections = ? WHERE id = ?');
   db.transaction(() => {

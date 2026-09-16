@@ -12,5 +12,10 @@ export function printDlcReport(report: DlcReport): void {
   console.log(`dlc: ${report.dlc}/${report.pages} pages, ${report.hasDlcSections} base pages mention DLC`);
   console.log(`signals: ${Object.entries(report.bySignal).map(([signal, hits]) => `${signal}=${hits}`).join(' ')}`);
   if (report.bySignal.category === 0) console.warn('warning: dlc_categories is empty, the category signal fired on nothing; run npm run sync-categories');
+  // The inline-tagging rule is all-or-nothing per index page, so one new {{SotE}} on a gallery that
+  // tags nothing today would silently drop the rest of it. Print what each index kept, every run.
+  for (const index of report.indexPages) {
+    console.log(`index_link: ${index.title} kept ${index.kept} of ${index.links} links (${index.tagged ? 'tagged' : 'untagged'})`);
+  }
   if (report.ambiguous.length) console.log(`ambiguous (candidates for data/dlc-overrides.json): ${report.ambiguous.slice(0, 20).join(', ')}`);
 }

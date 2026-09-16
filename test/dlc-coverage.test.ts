@@ -11,17 +11,19 @@ const hasDb = existsSync(DB_PATH);
  * A bound in both directions. The old floor-only assertion could catch under-labelling alone, while
  * over-labelling is what the classifier actually did: {{SotE}} read as a page marker labelled 857
  * pages, 239 of them base-game. Measured on the 2026-09-16 snapshot after the predicate-form rules
- * landed: 756 dlc (661 sote_template, 69 sote_link, 22 title_suffix, 123 category, 7 override) and
- * 273 has_dlc_sections. The jump from 622 is the two spellings the template rule could not see,
- * {{in|se}} and the plain ''[[Elden Ring: Shadow of the Erdtree]]'' link.
+ * landed and index_link joined them: 821 dlc (661 sote_template, 69 sote_link, 22 title_suffix,
+ * 123 category, 7 override, 508 index_link) and 263 has_dlc_sections. index_link is what reaches the
+ * pages the wiki never marked at all - Rellana's Twin Blades, Star-Lined Sword, the Smithscript
+ * weapons. Reading every link on an index page instead of only its tagged entries put it at 903, with
+ * 65 base-game creatures and bosses inside that number.
  * A change that moves either materially should have to say so here.
  */
 test('the shipped db classifies a plausible share of pages as dlc', { skip: hasDb ? false : 'data/elden-ring.db not present' }, () => {
   const db = openDb(DB_PATH, { readonly: true });
   const dlc = (db.prepare('SELECT count(*) AS n FROM pages WHERE dlc = 1').get() as { n: number }).n;
   const total = (db.prepare('SELECT count(*) AS n FROM pages').get() as { n: number }).n;
-  assert.ok(dlc >= 716, `expected at least 716 dlc pages, got ${dlc} of ${total} - a marker spelling has probably stopped being read`);
-  assert.ok(dlc <= 796, `expected at most 796 dlc pages, got ${dlc} of ${total} - the predicate-form requirement has probably regressed`);
+  assert.ok(dlc >= 781, `expected at least 781 dlc pages, got ${dlc} of ${total} - a marker spelling has probably stopped being read`);
+  assert.ok(dlc <= 861, `expected at most 861 dlc pages, got ${dlc} of ${total} - the predicate-form requirement has probably regressed`);
   db.close();
 });
 
@@ -85,12 +87,15 @@ test('the default mode answers about base-game pages and still gates dlc pages',
  * tell that from a genuine both-products claim, so they are corrected in the override file.
  * Realm of Shadow is the same story: its lead reads "the setting of the DLC expansion for {{ER}},
  * {{SotE}}", a coordinate product TITLE, and it too lives in the override file.
+ * Rellana's Twin Blades, Star-Lined Sword and Spear of the Impaler carry no marker whatsoever -
+ * Rellana's Twin Blades says only "featured in {{ER}}" - so index_link is the sole signal that
+ * reaches them, and each would silently revert to base game if that signal stopped firing.
  */
 test('known dlc pages are classified as dlc', { skip: hasDb ? false : 'data/elden-ring.db not present' }, () => {
   const db = openDb(DB_PATH, { readonly: true });
   for (const title of ['Verdigris Armor', 'Messmer the Impaler', 'Scadu Altus', 'Rellana, Twin Moon Knight', 'Realm of Shadow',
     'Milady', 'Great Katana', 'Putrescent Knight', 'Backhand Blade', 'Midra, Lord of Frenzied Flame', 'Beast Claw (weapon)',
-    'Cocoon of the Empyrean', 'Moangrave']) {
+    'Cocoon of the Empyrean', 'Moangrave', "Rellana's Twin Blades", 'Star-Lined Sword', 'Spear of the Impaler']) {
     const row = db.prepare('SELECT dlc FROM pages WHERE title = ?').get(title) as { dlc: number } | undefined;
     assert.ok(row, `${title} must exist in the snapshot`);
     assert.equal(row.dlc, 1, `${title} must be classified as dlc`);
@@ -115,6 +120,24 @@ test('base-game pages that merely link dlc items are not classified as dlc', { s
     const row = db.prepare('SELECT dlc FROM pages WHERE title = ?').get(title) as { dlc: number } | undefined;
     assert.ok(row, `${title} must exist in the snapshot`);
     assert.equal(row.dlc, 0, `${title} is base-game content and must not be dlc-gated by default`);
+  }
+  db.close();
+});
+
+/**
+ * The index_link signal's own failure mode, pinned on the real snapshot. "Enemies (Shadow of the
+ * Erdtree)" names every enemy the DLC contains, base-game returners included, and "Bosses (Shadow of
+ * the Erdtree)" links Elden Ring Nightreign from its See Also footer. Reading every link on those
+ * pages labelled 65 base-game creatures DLC. These titles must stay base with no signal at all - not
+ * merely be corrected by an override, which is what the first attempt needed 81 entries to do.
+ */
+test('base-game pages an index page merely lists are not classified as dlc', { skip: hasDb ? false : 'data/elden-ring.db not present' }, () => {
+  const db = openDb(DB_PATH, { readonly: true });
+  for (const title of ['Basilisk', 'Wolf', 'Crucible Knight', 'Runebear', 'Ulcerated Tree Spirit', 'Nightreign Bosses', 'Nightreign Enemies']) {
+    const row = db.prepare('SELECT dlc, dlc_signals FROM pages WHERE title = ?').get(title) as { dlc: number; dlc_signals: string | null } | undefined;
+    assert.ok(row, `${title} must exist in the snapshot`);
+    assert.equal(row.dlc, 0, `${title} is base-game content and must not be dlc-gated by default`);
+    assert.equal(row.dlc_signals, null, `${title} must need no override to stay base - the rule should not reach it`);
   }
   db.close();
 });
