@@ -4,6 +4,9 @@
 // on import, so it stays safe to import from a test (or, later, the npm-distribution guard file in
 // docs/superpowers/specs/2026-09-15-npm-distribution-design.md §2) without side effects.
 // To actually run the server: npx tsx src/server/start.ts (stdio; see that file, or `npm run mcp`).
+// Run directly instead — an old .mcp.json entry from before 2026-09-16 — and it exits 1 naming the new entry point.
+
+import { pathToFileURL } from 'node:url';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -13,6 +16,15 @@ import { openDbs } from '../query/dbs.js';
 import { bossInfo, getPage, itemStats, questSteps, search, sourcesStatus, whereIs } from '../query/lookups.js';
 import { cacheFextralife } from '../store/local.js';
 import { compact } from './compact.js';
+
+// Guard the old entry point. This module is imported by start.ts and by tests; only a direct
+// `tsx src/server/mcp-server.ts` (an .mcp.json written before 2026-09-16) reaches process.argv[1].
+// Exiting 0 with no output here left clients reporting CONNECTION_CLOSED with nothing to go on.
+const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  console.error('elden-ring-mcp: the entry point moved to src/server/start.ts (`npm run mcp`). Update your MCP config args to ["tsx", "src/server/start.ts"].');
+  process.exit(1);
+}
 
 export const INSTRUCTIONS = `Elden Ring reference data from a versioned snapshot of eldenring.fandom.com (CC BY-SA 3.0), plus an optional per-user Fextralife page cache. Every result carries provenance (source, title, url, revid, fetched_at, license): cite it when answering.
 

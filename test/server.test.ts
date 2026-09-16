@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -115,4 +116,17 @@ test('the server actually boots over stdio and answers initialize', async () => 
   } finally {
     await client.close();
   }
+});
+
+// Until 2026-09-16 the documented entry point was src/server/mcp-server.ts. It now only builds the
+// server, so an old .mcp.json that still names it got a process that exited 0 with no output and a
+// client that reported CONNECTION_CLOSED with nothing to go on.
+test('running mcp-server.ts directly exits 1 and names the new entry point', () => {
+  const result = spawnSync('npx', ['tsx', 'src/server/mcp-server.ts'], {
+    cwd: REPO_ROOT, encoding: 'utf8',
+    env: { ...process.env, ELDEN_RING_MCP_CACHE: mkdtempSync(join(tmpdir(), 'er-old-entry-')) },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /src\/server\/start\.ts/);
+  assert.match(result.stderr, /entry point/i);
 });
