@@ -3,6 +3,7 @@
 // Exit codes: 0 downloaded, 2 no data-* release exists yet (expected before the first publish),
 // 1 something went wrong (API error, bad response, failed download). Callers must treat 1 as fatal:
 // swallowing it turns a transient GitHub error into a silent full re-crawl of every page.
+import Database from 'better-sqlite3';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { DEFAULT_DB_PATH } from '../src/store/pages.js';
@@ -37,3 +38,11 @@ const bytes = Buffer.from(await download.arrayBuffer());
 mkdirSync('data', { recursive: true });
 writeFileSync(DEFAULT_DB_PATH, bytes);
 console.log(`downloaded ${release.tag_name} (${(bytes.length / 1e6).toFixed(1)} MB) to ${DEFAULT_DB_PATH}`);
+
+// The server opens this file read-only, which skips the column migration, so a release built before
+// the dlc columns leaves every tool answering data_stale. Say so here, where the fix is one command,
+// rather than leaving the user to discover it at query time. Not fatal: the download itself worked.
+const downloaded = new Database(DEFAULT_DB_PATH, { readonly: true });
+const hasDlc = (downloaded.prepare('PRAGMA table_info(pages)').all() as { name: string }[]).some((c) => c.name === 'dlc');
+downloaded.close();
+if (!hasDlc) console.error(`warning: ${release.tag_name} predates the dlc columns; run npm run extract before starting the server`);

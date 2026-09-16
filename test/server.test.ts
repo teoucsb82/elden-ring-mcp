@@ -5,6 +5,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import Database from 'better-sqlite3';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -113,6 +114,48 @@ test('the server actually boots over stdio and answers initialize', async () => 
     assert.equal(client.getServerVersion()?.name, 'elden-ring');
     const { tools } = await client.listTools();
     assert.ok(tools.find((t) => t.name === 'where_is'));
+  } finally {
+    await client.close();
+  }
+});
+
+/**
+ * Builds a db shaped like the only published data release (data-2026.09.16): a pages table from
+ * before the dlc migration. openDbs() opens the shipped db read-only, which skips the migration, so
+ * this schema is what a user who ran `npm run fetch-data` actually has on disk.
+ */
+function buildPreDlcDb(path: string): void {
+  const db = new Database(path);
+  db.exec(`CREATE TABLE pages (id INTEGER PRIMARY KEY, source TEXT NOT NULL, title TEXT NOT NULL, url TEXT NOT NULL,
+    revid INTEGER, fetched_at TEXT NOT NULL, license TEXT NOT NULL, patch TEXT, wikitext TEXT, UNIQUE (source, title));`);
+  db.close();
+}
+
+// Every tool used to die with "no such column: dlc" on a pre-dlc snapshot, which reads to a model as
+// a broken server rather than as data it can fix with one command. Spawned over stdio like the boot
+// test above, because the stale check happens at openDbs() time in the server process.
+test('a pre-dlc snapshot makes every tool report data_stale, and sources_status says so', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'er-server-stale-'));
+  const dbPath = join(dir, 'old.db');
+  buildPreDlcDb(dbPath);
+
+  const client = new Client({ name: 'server-stale-test', version: '0.0.0' });
+  await client.connect(
+    new StdioClientTransport({
+      command: 'npx',
+      args: ['tsx', 'src/server/start.ts'],
+      cwd: REPO_ROOT,
+      env: { ...process.env, ELDEN_RING_MCP_DB: dbPath, ELDEN_RING_MCP_CACHE: join(dir, 'cache') } as Record<string, string>,
+    }),
+    { timeout: 10_000 },
+  );
+  try {
+    const result = await client.callTool({ name: 'where_is', arguments: { name: 'Uchigatana' } });
+    const text = (result.content as { text: string }[])[0].text;
+    assert.match(text, /"error":"data_stale"/);
+    assert.match(text, /npm run extract/);
+    const status = await client.callTool({ name: 'sources_status', arguments: {} });
+    assert.match((status.content as { text: string }[])[0].text, /"stale"/);
   } finally {
     await client.close();
   }
