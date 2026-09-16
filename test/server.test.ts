@@ -84,6 +84,23 @@ test('compact passes primitives and arrays of primitives through', () => {
   assert.deepEqual(compact(['a', 'b']), ['a', 'b']);
 });
 
+// #18: an unknown max_req key (e.g. "luck", which the game has no scaling for) used to be silently
+// stripped by the zod object, so the caller got an unfiltered list back with no sign anything was
+// wrong. .strict() on the schema makes the SDK reject the call instead of guessing what was meant.
+test('item_stats rejects an unrecognized max_req key instead of silently dropping it', async () => {
+  const client = new Client({ name: 'max-req-test', version: '0.0.0' });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct), server.connect(st)]);
+  try {
+    const result = await client.callTool({ name: 'item_stats', arguments: { max_req: { luck: 5 } } });
+    assert.equal(result.isError, true);
+    const text = (result.content as { text: string }[])[0].text;
+    assert.match(text, /luck|Unrecognized key/);
+  } finally {
+    await client.close();
+  }
+});
+
 test('every lookup tool accepts a dlc mode', async () => {
   const tools = await listTools();
   const withDlc = ['search', 'get_page', 'where_is', 'quest_steps', 'item_stats', 'boss'];

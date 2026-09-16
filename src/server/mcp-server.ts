@@ -117,7 +117,7 @@ server.registerTool('item_stats', {
     kind: z.enum(['weapon', 'spell', 'talisman', 'armor']).optional(),
     scaling_stat: z.enum(['str', 'dex', 'int', 'fai', 'arc']).optional(),
     min_scaling: z.enum(['E', 'D', 'C', 'B', 'A', 'S']).optional(),
-    max_req: z.object({ str: z.number(), dex: z.number(), int: z.number(), fai: z.number(), arc: z.number() }).partial().optional().describe('Only items whose requirement for each given stat is at or under this'),
+    max_req: z.object({ str: z.number(), dex: z.number(), int: z.number(), fai: z.number(), arc: z.number() }).partial().strict().optional().describe('Only items whose requirement for each given stat is at or under this'),
     limit: z.number().int().min(1).max(100).optional(),
     dlc: dlcArg,
   },

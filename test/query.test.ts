@@ -271,8 +271,26 @@ test('search and item_stats report an explicit miss, never an empty object', () 
   assert.equal(zero.not_found, true);
   assert.equal(zero.query, 'zzqx nonsense');
   assert.equal((search(dbs(), '!!!') as any).not_found, true);
-  const noRows = itemStats(dbs(), { kind: 'talisman', max_req: { str: 10 } }) as any;
+  // kind: 'weapon' (which does carry str_req) so this stays a plain "nothing matched" miss rather
+  // than the invalid_filter case covered below, where max_req cannot apply to the kind at all.
+  const noRows = itemStats(dbs(), { kind: 'weapon', max_req: { str: -1 } }) as any;
   assert.equal(noRows.not_found, true);
+});
+
+test('item_stats on a page that is not an item says so instead of "no page matched"', () => {
+  const dbs = fixtureDbs([{ title: 'Godrick the Grafted', wikitext: 'boss', dlc: 0 }]);
+  const r = itemStats(dbs, { name: 'Godrick the Grafted' }) as { not_found: true; reason: string; page: string; match: string; hint: string };
+  assert.equal(r.reason, 'no_stats');
+  assert.equal(r.page, 'Godrick the Grafted');
+  assert.equal(r.match, 'exact');
+  assert.doesNotMatch(r.hint, /No page matched/);
+});
+
+test('item_stats says when max_req cannot apply to the requested kind', () => {
+  const dbs = fixtureDbs([{ title: 'Claw Talisman', wikitext: 'talisman', dlc: 0 }]);
+  const r = itemStats(dbs, { kind: 'talisman', max_req: { str: 10 } }) as { error: string; detail: string };
+  assert.equal(r.error, 'invalid_filter');
+  assert.match(r.detail, /talisman/);
 });
 
 test('a strong local match beats a weak full-text hit in shipped data', () => {
