@@ -282,14 +282,22 @@ test('a strong local match beats a weak full-text hit in shipped data', () => {
 });
 
 test('dlcPredicate produces constant SQL per mode', () => {
-  assert.equal(dlcPredicate('base'), 'pages.dlc = 0');
-  assert.equal(dlcPredicate('only'), 'pages.dlc = 1');
+  assert.equal(dlcPredicate('base'), "(pages.dlc = 0 OR pages.source = 'fextralife')");
+  assert.equal(dlcPredicate('only'), "(pages.dlc = 1 OR pages.source = 'fextralife')");
   assert.equal(dlcPredicate('all'), '1=1');
 });
 
 test('dlcPredicate honours a table alias', () => {
-  assert.equal(dlcPredicate('base', 'p'), 'p.dlc = 0');
+  assert.equal(dlcPredicate('base', 'p'), "(p.dlc = 0 OR p.source = 'fextralife')");
   assert.equal(dlcPredicate('all', 'p'), '1=1');
+});
+
+// A cached Fextralife page has no wikitext, so the classifier never reads it and its dlc column holds
+// the column default. Both filtering modes must let it through: "never classified" is not "base game".
+test('dlcPredicate exempts unclassified cache pages from every mode', () => {
+  for (const mode of ['base', 'only'] as const) {
+    assert.match(dlcPredicate(mode), /source = 'fextralife'/, `${mode} mode must not assert a dlc status it never measured`);
+  }
 });
 
 test('resolveName returns the page when the mode permits it', () => {
@@ -488,4 +496,63 @@ test('a base-mode search that does find base rows is unaffected', () => {
   const result = search(dbs, 'plate', 10, 'base') as { results: { title: string }[]; reason?: string };
   assert.equal(result.reason, undefined);
   assert.deepEqual(result.results.map((r) => r.title), ['Icerind Hatchet']);
+});
+
+/**
+ * The gate is only as good as the resolution behind it. "Verdigris Greatsword" is not a page: the FTS
+ * fallback lands on Enir-Ilim, which IS dlc, and the caller used to be told their own name was DLC
+ * content. Re-running with dlc: "all" then returns a page about something else entirely.
+ */
+test('a dlc gate reached by full-text fallback is reported as a guess', () => {
+  const dbs = fixtureDbs([{ title: 'Enir-Ilim', wikitext: 'the verdigris greatsword rests here', dlc: 1 }]);
+  const result = itemStats(dbs, { name: 'Verdigris Greatsword' }, 'base') as
+    { reason?: string; page?: string; match?: string; hint: string };
+  assert.equal(result.reason, 'dlc_filtered');
+  assert.equal(result.page, 'Enir-Ilim');
+  assert.equal(result.match, 'search', 'the gate must carry the match that produced it');
+  assert.match(result.hint, /Nothing is named "Verdigris Greatsword"/);
+  assert.match(result.hint, /guess/, 'a fuzzy match must not read as an authoritative statement');
+});
+
+test('a dlc gate on an exactly resolved name is not hedged as a guess', () => {
+  const dbs = fixtureDbs([{ title: 'Verdigris Armor', wikitext: 'armor', dlc: 1 }]);
+  const result = whereIs(dbs, 'Verdigris Armor', 'base') as { match?: string; hint: string };
+  assert.equal(result.match, 'exact');
+  assert.doesNotMatch(result.hint, /guess/);
+  assert.match(result.hint, /"Verdigris Armor" is Shadow of the Erdtree content/);
+});
+
+/** A cached Fextralife page carries markdown and no wikitext, so the classifier never labels it. */
+const cachedPage = (title: string, markdown: string) => {
+  const local = memoryDb();
+  upsertPage(local, {
+    source: 'fextralife', title, url: `https://eldenring.wiki.fextralife.com/${title}`, revid: null,
+    fetchedAt: '2026-09-16T00:00:00.000Z', wikitext: null, markdown,
+    license: 'All rights reserved (Fextralife). Local cache only; never redistributed.',
+  });
+  return { shipped: null, local } satisfies Dbs;
+};
+
+/**
+ * INSTRUCTIONS tell a model to retry with fetch: true after a miss, so this is a normal path. The
+ * cached page's dlc column is a default nobody measured; answering "base-game content" about a DLC
+ * boss is a claim the data cannot support, so an unclassified page is exempt from every mode and
+ * reports no dlc field at all.
+ */
+test('a cached Fextralife page is never dlc-filtered and asserts no dlc status', () => {
+  const dbs = cachedPage('Messmer the Impaler', '## Location\nShadow Keep, Church District');
+  for (const mode of ['base', 'only', 'all'] as const) {
+    const result = getPage(dbs, 'Messmer the Impaler', undefined, mode) as
+      { reason?: string; dlc?: boolean | null; provenance?: { source: string } };
+    assert.equal(result.reason, undefined, `${mode} mode must not gate a page nobody classified`);
+    assert.equal(result.provenance?.source, 'fextralife');
+    assert.equal(result.dlc, null, `${mode} mode must report unknown, not false`);
+  }
+});
+
+test('search reaches cached Fextralife rows in dlc-only mode', () => {
+  const dbs = cachedPage('Messmer the Impaler', '## Location\nShadow Keep, Church District');
+  const result = search(dbs, 'Shadow Keep', 10, 'only') as { results?: { title: string; dlc: boolean | null }[] };
+  assert.deepEqual(result.results?.map((r) => r.title), ['Messmer the Impaler']);
+  assert.equal(result.results?.[0].dlc, null);
 });

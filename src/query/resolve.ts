@@ -1,5 +1,5 @@
 import type { Db } from '../db/open.js';
-import { DEFAULT_DLC_MODE, type Dbs, type DlcMode } from './dbs.js';
+import { DEFAULT_DLC_MODE, dlcOf, type Dbs, type DlcMode } from './dbs.js';
 
 export interface Provenance {
   source: string;
@@ -16,21 +16,29 @@ export interface Resolved {
   provenance: Provenance;
   match: 'exact' | 'redirect' | 'entity' | 'search';
   fragment: string | null;
-  dlc: boolean;
+  /** null when the page was never classified (Fextralife cache): unknown, not base game. */
+  dlc: boolean | null;
 }
 
-/** The page exists but the caller's own dlc mode excluded it. Never a missing page. */
+/**
+ * The page exists but the caller's own dlc mode excluded it. Never a missing page.
+ *
+ * `match` rides along because the gate is only as good as the resolution behind it: a `search` match
+ * is the FTS fallback's best guess at an unresolvable name, and gating on one without saying so
+ * presents a guess as an authoritative statement about the page the caller asked for.
+ */
 export interface DlcFiltered {
   filtered: 'dlc';
   title: string;
   provenance: Provenance;
+  match: Resolved['match'];
 }
 
 export const isDlcFiltered = (r: Resolved | DlcFiltered | null): r is DlcFiltered =>
   r !== null && 'filtered' in r;
 
-const permits = (mode: DlcMode, dlc: boolean): boolean =>
-  mode === 'all' || (mode === 'only' ? dlc : !dlc);
+const permits = (mode: DlcMode, dlc: boolean | null): boolean =>
+  dlc === null || mode === 'all' || (mode === 'only' ? dlc : !dlc);
 
 const PROVENANCE_COLUMNS = 'id, source, title, url, revid, fetched_at, license, dlc';
 
@@ -38,7 +46,7 @@ type PageRecord = Provenance & { id: number; dlc: number };
 
 const toResolved = (db: Db, row: PageRecord, match: Resolved['match'], fragment: string | null = null): Resolved => {
   const { id, dlc, ...provenance } = row;
-  return { db, pageId: id, provenance, match, fragment, dlc: dlc === 1 };
+  return { db, pageId: id, provenance, match, fragment, dlc: dlcOf(provenance.source, dlc) };
 };
 
 /** Quotes each word so user text can't inject FTS5 syntax. */
@@ -97,5 +105,5 @@ export function resolveName(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_
 
   if (!found) return null;
   if (permits(mode, found.dlc)) return found;
-  return { filtered: 'dlc', title: found.provenance.title, provenance: found.provenance };
+  return { filtered: 'dlc', title: found.provenance.title, provenance: found.provenance, match: found.match };
 }

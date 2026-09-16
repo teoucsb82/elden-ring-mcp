@@ -1,7 +1,7 @@
 import type { Db } from '../db/open.js';
 import { SCALING_ORDER } from '../extract/common.js';
 import { BREAK_PATTERN, type QuestStep } from '../extract/quest.js';
-import { DEFAULT_DLC_MODE, dlcPredicate, type Dbs, type DlcMode } from './dbs.js';
+import { DEFAULT_DLC_MODE, dlcOf, dlcPredicate, type Dbs, type DlcMode } from './dbs.js';
 import { ftsQuery, isDlcFiltered, resolveName, type DlcFiltered, type Provenance, type Resolved } from './resolve.js';
 
 /**
@@ -22,13 +22,21 @@ const noMatch = (query: string, hint: string): NotFound => ({ not_found: true, q
  * The page exists but the caller's own mode excluded it. Distinct from not_found so an answer never
  * claims the snapshot lacks something it holds.
  */
-const dlcFiltered = (query: string, r: DlcFiltered, mode: DlcMode) => ({
-  not_found: true as const, query, reason: 'dlc_filtered' as const, page: r.title,
-  provenance: r.provenance,
-  hint: mode === 'only'
-    ? `"${r.title}" is base-game content and this call asked for DLC only. Re-run with dlc: "all" to include the base game, or dlc: "base" for the base game alone.`
-    : `"${r.title}" is Shadow of the Erdtree content and this call asked for base-game results. Re-run with dlc: "all" to include the DLC, or dlc: "only" for DLC alone.`,
-});
+const dlcFiltered = (query: string, r: DlcFiltered, mode: DlcMode) => {
+  const side = mode === 'only'
+    ? 'base-game content and this call asked for DLC only. Re-run with dlc: "all" to include the base game, or dlc: "base" for the base game alone.'
+    : 'Shadow of the Erdtree content and this call asked for base-game results. Re-run with dlc: "all" to include the DLC, or dlc: "only" for DLC alone.';
+  // A `search` match never resolved the name: it is the FTS fallback's nearest page, and the gate is
+  // only a statement about THAT page. Saying so is what stops a guess reading as an authoritative
+  // answer about the name the caller actually typed.
+  const hint = r.match === 'search'
+    ? `Nothing is named "${query}". The closest full-text match is the page "${r.title}", which is ${side} That page is a guess at what was meant, not a lookup of "${query}" — check it is the right subject before relying on it.`
+    : `"${r.title}" is ${side}`;
+  return {
+    not_found: true as const, query, reason: 'dlc_filtered' as const, page: r.title,
+    match: r.match, provenance: r.provenance, hint,
+  };
+};
 
 type ResolveOutcome =
   | { kind: 'ok'; resolved: Resolved }
@@ -86,7 +94,7 @@ function countMatches(dbs: Dbs, fts: string, mode: DlcMode): number {
 
 export function search(dbs: Dbs, query: string, limit = 10, mode: DlcMode = DEFAULT_DLC_MODE) {
   const fts = ftsQuery(query);
-  const results: { title: string; heading: string; snippet: string; dlc: boolean; provenance: Provenance }[] = [];
+  const results: { title: string; heading: string; snippet: string; dlc: boolean | null; provenance: Provenance }[] = [];
   // Zero hits is a miss, not an answer: an empty result set used to serialize as a bare {}.
   if (!fts) return noMatch(query, NO_SEARCH_HINT);
   for (const db of [dbs.shipped, dbs.local]) {
@@ -99,7 +107,7 @@ export function search(dbs: Dbs, query: string, limit = 10, mode: DlcMode = DEFA
       ORDER BY bm25(sections_fts, 10.0, 2.0, 1.0) LIMIT ?
     `).all(fts, limit) as (Provenance & { heading: string; snippet: string; dlc: number })[];
     for (const { heading, snippet, dlc, ...provenance } of rows) {
-      results.push({ title: provenance.title, heading, snippet, dlc: dlc === 1, provenance });
+      results.push({ title: provenance.title, heading, snippet, dlc: dlcOf(provenance.source, dlc), provenance });
     }
   }
   if (results.length) return { results: results.slice(0, limit) };
@@ -266,9 +274,9 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
       for (const [stat, max] of maxReq) { where.push(`t.${stat}_req IS NOT NULL AND t.${stat}_req <= ?`); params.push(max); }
       // p.dlc rides along: in all mode the result set mixes base and DLC items, and a row with no
       // marker reads as base game.
-      const sql = `SELECT t.*, p.dlc FROM ${KIND_TABLE[kind]} t JOIN pages p ON p.id = t.page_id WHERE ${[...where, dlcPredicate(mode, 'p')].join(' AND ')} ORDER BY t.name LIMIT ?`;
-      for (const { dlc, ...item } of db.prepare(sql).all(...params, limit) as (Record<string, unknown> & { dlc: number })[]) {
-        rows.push({ kind, ...item, dlc: dlc === 1, provenance: provenanceOf(db, item.page_id as number) });
+      const sql = `SELECT t.*, p.dlc, p.source AS page_source FROM ${KIND_TABLE[kind]} t JOIN pages p ON p.id = t.page_id WHERE ${[...where, dlcPredicate(mode, 'p')].join(' AND ')} ORDER BY t.name LIMIT ?`;
+      for (const { dlc, page_source, ...item } of db.prepare(sql).all(...params, limit) as (Record<string, unknown> & { dlc: number; page_source: string })[]) {
+        rows.push({ kind, ...item, dlc: dlcOf(page_source, dlc), provenance: provenanceOf(db, item.page_id as number) });
       }
     }
   }
