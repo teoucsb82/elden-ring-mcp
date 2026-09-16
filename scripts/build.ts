@@ -8,6 +8,7 @@ import { runExtractors } from '../src/extract/run.js';
 import { createFandom } from '../src/sources/fandom.js';
 import { DEFAULT_DB_PATH } from '../src/store/pages.js';
 import { syncFandom } from '../src/sync.js';
+import { printDlcReport } from './report.js';
 
 const CHANGELOG = 'data/CHANGELOG-data.md';
 const db = openDb(process.env.ELDEN_RING_MCP_DB ?? DEFAULT_DB_PATH);
@@ -26,10 +27,7 @@ const entry = formatChangelog(date, sync, diff, extract.failures.length).trimEnd
 writeFileSync(CHANGELOG, [title, intro, entry, ...rest].join('\n\n'));
 console.log(JSON.stringify({ touched: touched.length, rows: extract.rows, failures: extract.failures.length, fieldChanges: diff.changed.length }));
 
-const dlc = classifyDlc(db);
-console.log(`dlc: ${dlc.dlc}/${dlc.pages} pages, ${dlc.hasDlcSections} base pages mention DLC`);
-console.log(`signals: ${Object.entries(dlc.bySignal).map(([signal, hits]) => `${signal}=${hits}`).join(' ')}`);
-if (dlc.ambiguous.length) console.log(`ambiguous (candidates for data/dlc-overrides.json): ${dlc.ambiguous.slice(0, 20).join(', ')}`);
+printDlcReport(classifyDlc(db));
 
 db.exec('VACUUM');
 db.close();

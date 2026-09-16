@@ -10,7 +10,8 @@ const hasDb = existsSync(DB_PATH);
 /**
  * A bound in both directions. The old floor-only assertion could catch under-labelling alone, while
  * over-labelling is what the classifier actually did: {{SotE}} read as a page marker labelled 857
- * pages, 239 of them base-game. Measured on the 2026-09-16 snapshot: 618 dlc, 247 has_dlc_sections.
+ * pages, 239 of them base-game. Measured on the 2026-09-16 snapshot: 618 dlc, 247 has_dlc_sections
+ * before the category crawl ran, 622 and 246 after it.
  * A change that moves either materially should have to say so here.
  */
 test('the shipped db classifies a plausible share of pages as dlc', { skip: hasDb ? false : 'data/elden-ring.db not present' }, () => {
@@ -114,5 +115,16 @@ test('known base pages are not classified as dlc', { skip: hasDb ? false : 'data
     assert.ok(row, `${title} must exist in the snapshot`);
     assert.equal(row.dlc, 0, `${title} must stay base game`);
   }
+  db.close();
+});
+
+// dlc_categories was empty in the first shipped snapshot (synced two hours before the crawl
+// landed), so the category signal had only ever fired in synthetic unit tests.
+test('the shipped db carries category membership and the category signal fired', { skip: hasDb ? false : 'data/elden-ring.db not present' }, () => {
+  const db = openDb(DB_PATH, { readonly: true });
+  const titles = (db.prepare('SELECT count(*) AS n FROM dlc_categories').get() as { n: number }).n;
+  assert.ok(titles >= 60, `expected 60+ dlc category titles (Locations alone has 64 live), got ${titles}`);
+  const hits = (db.prepare("SELECT hits FROM dlc_report WHERE signal = 'category'").get() as { hits: number }).hits;
+  assert.ok(hits >= 50, `expected the category signal to fire on 50+ pages, got ${hits}`);
   db.close();
 });
