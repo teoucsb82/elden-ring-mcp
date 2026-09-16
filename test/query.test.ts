@@ -371,6 +371,31 @@ test('resolveName defaults to base mode', () => {
   assert.ok(r && isDlcFiltered(r));
 });
 
+test('every name lookup reports dlc and has_dlc_sections', () => {
+  const dbs = fixtureDbs([
+    { title: 'Flask of Crimson Tears', wikitext: 'flask', dlc: 0, hasDlcSections: 1 },
+    { title: 'Verdigris Armor', wikitext: 'armor', dlc: 1 },
+  ]);
+  for (const lookup of [whereIs, questSteps, bossInfo] as const) {
+    const flagged = lookup(dbs, 'Flask of Crimson Tears', 'all') as { dlc: boolean; has_dlc_sections: boolean };
+    assert.equal(flagged.dlc, false, lookup.name);
+    assert.equal(flagged.has_dlc_sections, true, lookup.name);
+    const dlc = lookup(dbs, 'Verdigris Armor', 'all') as { dlc: boolean; has_dlc_sections: boolean };
+    assert.equal(dlc.dlc, true, lookup.name);
+    assert.equal(dlc.has_dlc_sections, false, lookup.name);
+  }
+  const page = getPage(dbs, 'Flask of Crimson Tears', undefined, 'all') as { has_dlc_sections: boolean };
+  assert.equal(page.has_dlc_sections, true);
+});
+
+test('itemStats by name reports dlc and has_dlc_sections', () => {
+  const dbs = fixtureDbs([{ title: 'Verdigris Armor', wikitext: 'armor', dlc: 1, weapon: { name: 'Verdigris Armor' } }]);
+  const result = itemStats(dbs, { name: 'Verdigris Armor' }, 'all') as { dlc: boolean; has_dlc_sections: boolean; rows: unknown[] };
+  assert.equal(result.dlc, true);
+  assert.equal(result.has_dlc_sections, false);
+  assert.ok(result.rows.length > 0);
+});
+
 // "Knight Arm" in base mode gated on Death Knight Gauntlets (dlc) while 39 base pages matched.
 // Vagabond's wikitext carries extra filler so its section is longer than Death's: FTS5's bm25 length
 // normalization then ranks Death first unfiltered, proven by the raw top hit in the task report.

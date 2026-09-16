@@ -88,6 +88,8 @@ test('every lookup tool accepts a dlc mode', async () => {
 test('the server instructions state the base-game default', () => {
   assert.match(INSTRUCTIONS, /base game/i);
   assert.match(INSTRUCTIONS, /dlc_filtered/);
+  assert.match(INSTRUCTIONS, /marker/i);
+  assert.doesNotMatch(INSTRUCTIONS, /discusses DLC events/);
 });
 
 // This spawns the real entry point (src/server/start.ts) as a subprocess over stdio, the same way an
