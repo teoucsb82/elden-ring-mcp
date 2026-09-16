@@ -2,6 +2,7 @@
 // Network access happens only when a tool is called with fetch: true (one Fextralife page into the local cache).
 // Run: npx tsx src/server/mcp-server.ts (stdio; Claude Code spawns it via .mcp.json)
 
+import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -11,9 +12,13 @@ import { bossInfo, getPage, itemStats, questSteps, search, sourcesStatus, whereI
 import { cacheFextralife } from '../store/local.js';
 import { compact } from './compact.js';
 
-const INSTRUCTIONS = `Elden Ring reference data from a versioned snapshot of eldenring.fandom.com (CC BY-SA 3.0), plus an optional per-user Fextralife page cache. Every result carries provenance (source, title, url, revid, fetched_at, license): cite it when answering. A result with not_found means the data does not cover it; say so instead of guessing, or retry with fetch: true to cache the Fextralife page. Fandom and Fextralife sometimes disagree on numbers; when both are present, show both with their sources. Directions from the wiki may omit prerequisites; state prerequisites the result lists.`;
+export const INSTRUCTIONS = `Elden Ring reference data from a versioned snapshot of eldenring.fandom.com (CC BY-SA 3.0), plus an optional per-user Fextralife page cache. Every result carries provenance (source, title, url, revid, fetched_at, license): cite it when answering.
 
-const server = new McpServer({ name: 'elden-ring', version: '0.1.0' }, { instructions: INSTRUCTIONS });
+Results are base game only by default. Pass dlc: "all" to include Shadow of the Erdtree content, or dlc: "only" for DLC content alone. A result with reason: "dlc_filtered" means the page exists but this call asked for base-game results: say so and offer to re-run with dlc: "all"; never report it as missing data. A result with has_dlc_sections means a base-game page whose text also discusses DLC events.
+
+A result with not_found and no reason means the data does not cover it; say so instead of guessing, or retry with fetch: true to cache the Fextralife page. Fandom and Fextralife sometimes disagree on numbers; when both are present, show both with their sources. Directions from the wiki may omit prerequisites; state prerequisites the result lists.`;
+
+export const server = new McpServer({ name: 'elden-ring', version: '0.1.0' }, { instructions: INSTRUCTIONS });
 const dbs = openDbs();
 
 const reply = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(compact(value)) }] });
@@ -23,6 +28,9 @@ const READ_ONLY = { readOnlyHint: true, idempotentHint: true, openWorldHint: fal
 const MAY_FETCH = { readOnlyHint: false, idempotentHint: true, openWorldHint: true } as const;
 
 const fetchArg = z.boolean().optional().describe('If true, first fetch this page from Fextralife into the local cache (network; local only, never shipped)');
+
+const dlcArg = z.enum(['base', 'all', 'only']).optional().default('base')
+  .describe('Which content to search: "base" (default) is base game only, "all" includes Shadow of the Erdtree, "only" is DLC content alone');
 
 /** Runs a lookup; with fetch: true, caches the Fextralife page for `title` first. */
 async function withFetch<T>(title: string, fetch: boolean | undefined, lookup: () => T) {
@@ -40,9 +48,10 @@ server.registerTool('search', {
   inputSchema: {
     query: z.string().min(1).describe('Words to search for'),
     limit: z.number().int().min(1).max(50).optional().describe('Max results (default 10)'),
+    dlc: dlcArg,
   },
   annotations: READ_ONLY,
-}, async ({ query, limit }) => { try { return reply(search(dbs, query, limit)); } catch (error) { return fail(error); } });
+}, async ({ query, limit, dlc }) => { try { return reply(search(dbs, query, limit, dlc)); } catch (error) { return fail(error); } });
 
 server.registerTool('get_page', {
   title: 'Get page',
@@ -51,23 +60,24 @@ server.registerTool('get_page', {
     title: z.string().min(1).describe('Page or item name'),
     section: z.string().optional().describe('Only sections whose heading contains this text'),
     fetch: fetchArg,
+    dlc: dlcArg,
   },
   annotations: MAY_FETCH,
-}, async ({ title, section, fetch }) => withFetch(title, fetch, () => getPage(dbs, title, section)));
+}, async ({ title, section, fetch, dlc }) => withFetch(title, fetch, () => getPage(dbs, title, section, dlc)));
 
 server.registerTool('where_is', {
   title: 'Where is an item',
   description: 'How to get an item, spell, talisman or armor piece: method (drop/merchant/chest/quest/ground), nearest site of grace if the wiki names one, prerequisite sentences, missable flag, and the acquisition/location sections verbatim.',
-  inputSchema: { name: z.string().min(1).describe('Item name, e.g. "Azur\'s Glintstone Staff"'), fetch: fetchArg },
+  inputSchema: { name: z.string().min(1).describe('Item name, e.g. "Azur\'s Glintstone Staff"'), fetch: fetchArg, dlc: dlcArg },
   annotations: MAY_FETCH,
-}, async ({ name, fetch }) => withFetch(name, fetch, () => whereIs(dbs, name)));
+}, async ({ name, fetch, dlc }) => withFetch(name, fetch, () => whereIs(dbs, name, dlc)));
 
 server.registerTool('quest_steps', {
   title: 'NPC quest steps',
   description: 'Ordered questline steps for an NPC (location + actions), per-step quest-breaking warnings, and warnings from the page notes. Falls back to quest sections when steps could not be parsed.',
-  inputSchema: { npc: z.string().min(1).describe('NPC name, e.g. "Sorceress Sellen"'), fetch: fetchArg },
+  inputSchema: { npc: z.string().min(1).describe('NPC name, e.g. "Sorceress Sellen"'), fetch: fetchArg, dlc: dlcArg },
   annotations: MAY_FETCH,
-}, async ({ npc, fetch }) => withFetch(npc, fetch, () => questSteps(dbs, npc)));
+}, async ({ npc, fetch, dlc }) => withFetch(npc, fetch, () => questSteps(dbs, npc, dlc)));
 
 server.registerTool('item_stats', {
   title: 'Item stats',
@@ -79,16 +89,17 @@ server.registerTool('item_stats', {
     min_scaling: z.enum(['E', 'D', 'C', 'B', 'A', 'S']).optional(),
     max_req: z.object({ str: z.number(), dex: z.number(), int: z.number(), fai: z.number(), arc: z.number() }).partial().optional().describe('Only items whose requirement for each given stat is at or under this'),
     limit: z.number().int().min(1).max(100).optional(),
+    dlc: dlcArg,
   },
   annotations: READ_ONLY,
-}, async (args) => { try { return reply(itemStats(dbs, args)); } catch (error) { return fail(error); } });
+}, async ({ dlc, ...filter }) => { try { return reply(itemStats(dbs, filter, dlc)); } catch (error) { return fail(error); } });
 
 server.registerTool('boss', {
   title: 'Boss info',
   description: 'Boss location, HP, runes and drops from the wiki infobox, plus overview/strategy/weakness sections. Names that redirect to a section of a shared page (e.g. "Magma Wyrm Makar") return that section.',
-  inputSchema: { name: z.string().min(1), fetch: fetchArg },
+  inputSchema: { name: z.string().min(1), fetch: fetchArg, dlc: dlcArg },
   annotations: MAY_FETCH,
-}, async ({ name, fetch }) => withFetch(name, fetch, () => bossInfo(dbs, name)));
+}, async ({ name, fetch, dlc }) => withFetch(name, fetch, () => bossInfo(dbs, name, dlc)));
 
 server.registerTool('sources_status', {
   title: 'Data sources status',
@@ -97,4 +108,8 @@ server.registerTool('sources_status', {
   annotations: READ_ONLY,
 }, async () => { try { return reply(sourcesStatus(dbs)); } catch (error) { return fail(error); } });
 
-await server.connect(new StdioServerTransport());
+// Only connect stdio when this file is run directly (`npx tsx src/server/mcp-server.ts`), not when
+// imported (e.g. by tests wanting `server` or `INSTRUCTIONS`) — importing must not start a live server.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  await server.connect(new StdioServerTransport());
+}
