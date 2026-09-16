@@ -3,26 +3,55 @@ import assert from 'node:assert/strict';
 import { buildFixtureDb } from './fixtures/build-fixture-db.js';
 import { memoryDb } from './helpers.js';
 import { replaceRedirects, upsertPage } from '../src/store/pages.js';
-import { resolveName } from '../src/query/resolve.js';
+import { isDlcFiltered, resolveName } from '../src/query/resolve.js';
 import { bossInfo, getPage, itemStats, questSteps, search, sourcesStatus, whereIs } from '../src/query/lookups.js';
 import { dlcPredicate } from '../src/query/dbs.js';
 import type { Dbs } from '../src/query/dbs.js';
 
 const dbs = (): Dbs => ({ shipped: buildFixtureDb(), local: null });
 
+/**
+ * resolveName can now answer with the dlc-filtered shape, which carries no `match` or `fragment`.
+ * Every fixture these pre-dlc tests use is base game, so narrowing here keeps their assertions as
+ * they were rather than restating the resolver's contract in each one.
+ */
+const resolveBase = (d: Dbs, name: string) => {
+  const r = resolveName(d, name);
+  return isDlcFiltered(r) ? null : r;
+};
+
+type Fixture = { title: string; wikitext: string; dlc: number; hasDlcSections?: number };
+
+/** A dlc-aware fixture db: one page per entry, with its single section indexed for search. */
+function fixtureDbs(fixtures: Fixture[]): Dbs {
+  const db = memoryDb();
+  const insertPage = db.prepare(
+    'INSERT INTO pages (source, title, url, revid, fetched_at, license, wikitext, dlc, has_dlc_sections) VALUES (?,?,?,?,?,?,?,?,?)');
+  const insertSection = db.prepare('INSERT INTO sections (page_id, ord, heading, markdown) VALUES (?,?,?,?)');
+  const insertFts = db.prepare('INSERT INTO sections_fts (rowid, title, heading, markdown) VALUES (?,?,?,?)');
+  for (const f of fixtures) {
+    const { lastInsertRowid } = insertPage.run(
+      'fandom', f.title, `https://x/${f.title}`, 1, '2026-09-15', 'CC BY-SA 3.0', f.wikitext, f.dlc, f.hasDlcSections ?? 0);
+    const pageId = Number(lastInsertRowid);
+    const section = insertSection.run(pageId, 0, 'Acquisition', f.wikitext);
+    insertFts.run(Number(section.lastInsertRowid), f.title, 'Acquisition', f.wikitext);
+  }
+  return { shipped: db, local: null };
+}
+
 test('resolveName: exact (case-insensitive), redirect with fragment, entity, search', () => {
   const d = dbs();
-  assert.equal(resolveName(d, "azur's glintstone staff")?.match, 'exact');
-  const makar = resolveName(d, 'Magma Wyrm Makar')!;
+  assert.equal(resolveBase(d, "azur's glintstone staff")?.match, 'exact');
+  const makar = resolveBase(d, 'Magma Wyrm Makar')!;
   assert.deepEqual([makar.match, makar.provenance.title, makar.fragment], ['redirect', 'Red Wolf of Radagon', 'Overview']);
-  assert.equal(resolveName(d, 'cuckoo church staff')?.match, 'search');
-  assert.equal(resolveName(d, 'zzqx nonsense'), null);
+  assert.equal(resolveBase(d, 'cuckoo church staff')?.match, 'search');
+  assert.equal(resolveBase(d, 'zzqx nonsense'), null);
 });
 
 test('resolveName falls back to the local cache db', () => {
   const local = memoryDb();
   upsertPage(local, { source: 'fextralife', title: 'Lusat', url: 'https://eldenring.wiki.fextralife.com/Lusat', revid: null, fetchedAt: '2026-09-15T00:00:00.000Z', wikitext: null, markdown: '## Location\nSellia Hideaway', license: 'All rights reserved (Fextralife). Local cache only; never redistributed.' });
-  const resolved = resolveName({ shipped: buildFixtureDb(), local }, 'Lusat')!;
+  const resolved = resolveBase({ shipped: buildFixtureDb(), local }, 'Lusat')!;
   assert.equal(resolved.provenance.source, 'fextralife');
 });
 
@@ -240,8 +269,8 @@ test('a strong local match beats a weak full-text hit in shipped data', () => {
   const local = memoryDb();
   upsertPage(local, { source: 'fextralife', title: 'Cuckoo', url: 'https://eldenring.wiki.fextralife.com/Cuckoo', revid: null, fetchedAt: '2026-09-15T00:00:00.000Z', wikitext: null, markdown: '## Location\nLiurnia of the Lakes', license: 'All rights reserved (Fextralife). Local cache only; never redistributed.' });
   const shipped = buildFixtureDb();
-  assert.equal(resolveName({ shipped, local: null }, 'Cuckoo')?.match, 'search');
-  const resolved = resolveName({ shipped, local }, 'Cuckoo')!;
+  assert.equal(resolveBase({ shipped, local: null }, 'Cuckoo')?.match, 'search');
+  const resolved = resolveBase({ shipped, local }, 'Cuckoo')!;
   assert.equal(resolved.match, 'exact');
   assert.equal(resolved.provenance.source, 'fextralife');
 });
@@ -255,4 +284,107 @@ test('dlcPredicate produces constant SQL per mode', () => {
 test('dlcPredicate honours a table alias', () => {
   assert.equal(dlcPredicate('base', 'p'), 'p.dlc = 0');
   assert.equal(dlcPredicate('all', 'p'), '1=1');
+});
+
+test('resolveName returns the page when the mode permits it', () => {
+  const dbs = fixtureDbs([{ title: 'Icerind Hatchet', wikitext: 'axe', dlc: 0 }]);
+  const r = resolveName(dbs, 'Icerind Hatchet', 'base');
+  assert.ok(r && !isDlcFiltered(r));
+  assert.equal(r.dlc, false);
+});
+
+test('resolveName reports a dlc page as filtered in base mode', () => {
+  const dbs = fixtureDbs([{ title: 'Verdigris Armor', wikitext: 'armor', dlc: 1 }]);
+  const r = resolveName(dbs, 'Verdigris Armor', 'base');
+  assert.ok(r && isDlcFiltered(r));
+  assert.equal(r.title, 'Verdigris Armor');
+  assert.equal(r.provenance.title, 'Verdigris Armor');
+});
+
+test('resolveName returns a dlc page in all mode', () => {
+  const dbs = fixtureDbs([{ title: 'Verdigris Armor', wikitext: 'armor', dlc: 1 }]);
+  const r = resolveName(dbs, 'Verdigris Armor', 'all');
+  assert.ok(r && !isDlcFiltered(r));
+  assert.equal(r.dlc, true);
+});
+
+test('resolveName filters a base page in only mode', () => {
+  const dbs = fixtureDbs([{ title: 'Icerind Hatchet', wikitext: 'axe', dlc: 0 }]);
+  const r = resolveName(dbs, 'Icerind Hatchet', 'only');
+  assert.ok(r && isDlcFiltered(r));
+});
+
+test('a page that does not exist is still a plain miss', () => {
+  const dbs = fixtureDbs([{ title: 'Icerind Hatchet', wikitext: 'axe', dlc: 0 }]);
+  assert.equal(resolveName(dbs, 'Nonexistent Sword of Nothing', 'base'), null);
+});
+
+test('resolveName defaults to base mode', () => {
+  const dbs = fixtureDbs([{ title: 'Verdigris Armor', wikitext: 'armor', dlc: 1 }]);
+  const r = resolveName(dbs, 'Verdigris Armor');
+  assert.ok(r && isDlcFiltered(r));
+});
+
+test('whereIs on a dlc item in base mode explains the filter', () => {
+  const dbs = fixtureDbs([{ title: 'Verdigris Armor', wikitext: 'armor', dlc: 1 }]);
+  const result = whereIs(dbs, 'Verdigris Armor', 'base') as { not_found: true; reason: string; page: string; hint: string };
+  assert.equal(result.not_found, true);
+  assert.equal(result.reason, 'dlc_filtered');
+  assert.equal(result.page, 'Verdigris Armor');
+  assert.match(result.hint, /Shadow of the Erdtree/);
+  assert.match(result.hint, /dlc/);
+});
+
+test('whereIs on a dlc item in all mode answers', () => {
+  const dbs = fixtureDbs([{ title: 'Verdigris Armor', wikitext: 'armor', dlc: 1 }]);
+  const result = whereIs(dbs, 'Verdigris Armor', 'all') as { provenance: { title: string }; dlc: boolean };
+  assert.equal(result.provenance.title, 'Verdigris Armor');
+  assert.equal(result.dlc, true);
+});
+
+test('a genuinely missing page is not reported as dlc_filtered', () => {
+  const dbs = fixtureDbs([{ title: 'Icerind Hatchet', wikitext: 'axe', dlc: 0 }]);
+  const result = whereIs(dbs, 'Sword Of Nothing At All', 'base') as { not_found: true; reason?: string };
+  assert.equal(result.not_found, true);
+  assert.equal(result.reason, undefined);
+});
+
+test('search excludes dlc results in base mode', () => {
+  const dbs = fixtureDbs([
+    { title: 'Verdigris Armor', wikitext: 'verdigris plate', dlc: 1 },
+    { title: 'Icerind Hatchet', wikitext: 'frost axe', dlc: 0 },
+  ]);
+  const base = search(dbs, 'verdigris', 10, 'base') as { not_found?: true };
+  assert.equal(base.not_found, true);
+
+  const all = search(dbs, 'verdigris', 10, 'all') as { results: { title: string; dlc: boolean }[] };
+  assert.equal(all.results.length, 1);
+  assert.equal(all.results[0].dlc, true);
+});
+
+test('search in only mode returns dlc results alone', () => {
+  const dbs = fixtureDbs([
+    { title: 'Verdigris Armor', wikitext: 'plate armor', dlc: 1 },
+    { title: 'Icerind Hatchet', wikitext: 'plate axe', dlc: 0 },
+  ]);
+  const result = search(dbs, 'plate', 10, 'only') as { results: { title: string }[] };
+  assert.equal(result.results.length, 1);
+  assert.equal(result.results[0].title, 'Verdigris Armor');
+});
+
+test('getPage carries has_dlc_sections on a base page that mentions dlc', () => {
+  const dbs = fixtureDbs([{ title: 'Great Runes', wikitext: 'lore', dlc: 0, hasDlcSections: 1 }]);
+  const result = getPage(dbs, 'Great Runes', undefined, 'base') as { has_dlc_sections: boolean };
+  assert.equal(result.has_dlc_sections, true);
+});
+
+test('sourcesStatus reports base and dlc counts', () => {
+  const dbs = fixtureDbs([
+    { title: 'Verdigris Armor', wikitext: 'a', dlc: 1 },
+    { title: 'Icerind Hatchet', wikitext: 'b', dlc: 0 },
+  ]);
+  const status = sourcesStatus(dbs) as { shipped: { pages: number; dlc_pages: number; base_pages: number } };
+  assert.equal(status.shipped.pages, 2);
+  assert.equal(status.shipped.dlc_pages, 1);
+  assert.equal(status.shipped.base_pages, 1);
 });

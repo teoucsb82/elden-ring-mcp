@@ -1,5 +1,5 @@
 import type { Db } from '../db/open.js';
-import type { Dbs } from './dbs.js';
+import { DEFAULT_DLC_MODE, type Dbs, type DlcMode } from './dbs.js';
 
 export interface Provenance {
   source: string;
@@ -16,15 +16,29 @@ export interface Resolved {
   provenance: Provenance;
   match: 'exact' | 'redirect' | 'entity' | 'search';
   fragment: string | null;
+  dlc: boolean;
 }
 
-const PROVENANCE_COLUMNS = 'id, source, title, url, revid, fetched_at, license';
+/** The page exists but the caller's own dlc mode excluded it. Never a missing page. */
+export interface DlcFiltered {
+  filtered: 'dlc';
+  title: string;
+  provenance: Provenance;
+}
 
-type PageRecord = Provenance & { id: number };
+export const isDlcFiltered = (r: Resolved | DlcFiltered | null): r is DlcFiltered =>
+  r !== null && 'filtered' in r;
+
+const permits = (mode: DlcMode, dlc: boolean): boolean =>
+  mode === 'all' || (mode === 'only' ? dlc : !dlc);
+
+const PROVENANCE_COLUMNS = 'id, source, title, url, revid, fetched_at, license, dlc';
+
+type PageRecord = Provenance & { id: number; dlc: number };
 
 const toResolved = (db: Db, row: PageRecord, match: Resolved['match'], fragment: string | null = null): Resolved => {
-  const { id, ...provenance } = row;
-  return { db, pageId: id, provenance, match, fragment };
+  const { id, dlc, ...provenance } = row;
+  return { db, pageId: id, provenance, match, fragment, dlc: dlc === 1 };
 };
 
 /** Quotes each word so user text can't inject FTS5 syntax. */
@@ -56,17 +70,32 @@ function resolveIn(db: Db, name: string): Resolved | null {
   return hit ? toResolved(db, hit, 'search') : null;
 }
 
-/** Shipped data first, then the local cache. Within a db: exact title, redirect, entity name, full-text search. */
-export function resolveName(dbs: Dbs, name: string): Resolved | null {
+/**
+ * Shipped data first, then the local cache. Within a db: exact title, redirect, entity name, full-text
+ * search.
+ *
+ * Resolves against every page regardless of mode, then compares. Excluding DLC rows from the
+ * resolver's view instead would make "the snapshot does not cover this" and "you did not ask for
+ * DLC" indistinguishable, which is the failure this whole feature exists to avoid.
+ */
+export function resolveName(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE): Resolved | DlcFiltered | null {
+  const trimmed = name.trim();
+  let found: Resolved | null = null;
+
   for (const db of [dbs.shipped, dbs.local]) {
     if (!db) continue;
-    const resolved = resolveIn(db, name.trim());
-    if (resolved && resolved.match !== 'search') return resolved;
+    const resolved = resolveIn(db, trimmed);
+    if (resolved && resolved.match !== 'search') { found = resolved; break; }
   }
-  for (const db of [dbs.shipped, dbs.local]) {
-    if (!db) continue;
-    const resolved = resolveIn(db, name.trim());
-    if (resolved) return resolved;
+  if (!found) {
+    for (const db of [dbs.shipped, dbs.local]) {
+      if (!db) continue;
+      const resolved = resolveIn(db, trimmed);
+      if (resolved) { found = resolved; break; }
+    }
   }
-  return null;
+
+  if (!found) return null;
+  if (permits(mode, found.dlc)) return found;
+  return { filtered: 'dlc', title: found.provenance.title, provenance: found.provenance };
 }

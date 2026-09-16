@@ -1,10 +1,15 @@
 import type { Db } from '../db/open.js';
 import { SCALING_ORDER } from '../extract/common.js';
 import { BREAK_PATTERN, type QuestStep } from '../extract/quest.js';
-import type { Dbs } from './dbs.js';
-import { ftsQuery, resolveName, type Provenance, type Resolved } from './resolve.js';
+import { DEFAULT_DLC_MODE, dlcPredicate, type Dbs, type DlcMode } from './dbs.js';
+import { ftsQuery, isDlcFiltered, resolveName, type DlcFiltered, type Provenance, type Resolved } from './resolve.js';
 
-export interface NotFound { not_found: true; query: string; hint: string }
+/**
+ * `reason` is declared as absent rather than omitted: without it a richer miss (dlc_filtered,
+ * no_sections) is a structural subtype of NotFound, and TypeScript's return-type inference collapses
+ * the union down to NotFound, hiding `reason` from every caller.
+ */
+export interface NotFound { not_found: true; query: string; hint: string; reason?: undefined }
 
 const NO_PAGE_HINT = 'No page matched in the shipped data or local cache. Try search, or pass fetch: true to cache the Fextralife page.';
 
@@ -12,6 +17,29 @@ const notFound = (query: string): NotFound => ({ not_found: true, query, hint: N
 
 /** A miss that is not a missing page: say what was searched and why nothing came back. */
 const noMatch = (query: string, hint: string): NotFound => ({ not_found: true, query, hint });
+
+/**
+ * The page exists but the caller's own mode excluded it. Distinct from not_found so an answer never
+ * claims the snapshot lacks something it holds.
+ */
+const dlcFiltered = (query: string, r: DlcFiltered) => ({
+  not_found: true as const, query, reason: 'dlc_filtered' as const, page: r.title,
+  provenance: r.provenance,
+  hint: `"${r.title}" is Shadow of the Erdtree content and this call asked for base-game results. Re-run with dlc: "all" to include the DLC, or dlc: "only" for DLC alone.`,
+});
+
+type ResolveOutcome =
+  | { kind: 'ok'; resolved: Resolved }
+  | { kind: 'filtered'; miss: ReturnType<typeof dlcFiltered> }
+  | { kind: 'missing'; miss: NotFound };
+
+/** One entry point for every name-resolving lookup, so none of them can forget the dlc check. */
+function resolveFor(dbs: Dbs, name: string, mode: DlcMode): ResolveOutcome {
+  const r = resolveName(dbs, name, mode);
+  if (!r) return { kind: 'missing', miss: notFound(name) };
+  if (isDlcFiltered(r)) return { kind: 'filtered', miss: dlcFiltered(name, r) };
+  return { kind: 'ok', resolved: r };
+}
 
 type SectionOut = { heading: string; markdown: string };
 
@@ -24,20 +52,23 @@ const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 
 const NO_SEARCH_HINT = 'Nothing in the shipped data or the local cache matches these words. Try fewer or different words, or pass fetch: true on get_page to cache the Fextralife page.';
 
-export function search(dbs: Dbs, query: string, limit = 10) {
+export function search(dbs: Dbs, query: string, limit = 10, mode: DlcMode = DEFAULT_DLC_MODE) {
   const fts = ftsQuery(query);
-  const results: { title: string; heading: string; snippet: string; provenance: Provenance }[] = [];
+  const results: { title: string; heading: string; snippet: string; dlc: boolean; provenance: Provenance }[] = [];
   // Zero hits is a miss, not an answer: an empty result set used to serialize as a bare {}.
   if (!fts) return noMatch(query, NO_SEARCH_HINT);
   for (const db of [dbs.shipped, dbs.local]) {
     if (!db) continue;
     const rows = db.prepare(`
-      SELECT p.source, p.title, p.url, p.revid, p.fetched_at, p.license, s.heading,
+      SELECT p.source, p.title, p.url, p.revid, p.fetched_at, p.license, p.dlc, s.heading,
              snippet(sections_fts, 2, '**', '**', ' … ', 24) AS snippet
       FROM sections_fts f JOIN sections s ON s.id = f.rowid JOIN pages p ON p.id = s.page_id
-      WHERE sections_fts MATCH ? ORDER BY bm25(sections_fts, 10.0, 2.0, 1.0) LIMIT ?
-    `).all(fts, limit) as (Provenance & { heading: string; snippet: string })[];
-    for (const { heading, snippet, ...provenance } of rows) results.push({ title: provenance.title, heading, snippet, provenance });
+      WHERE sections_fts MATCH ? AND ${dlcPredicate(mode, 'p')}
+      ORDER BY bm25(sections_fts, 10.0, 2.0, 1.0) LIMIT ?
+    `).all(fts, limit) as (Provenance & { heading: string; snippet: string; dlc: number })[];
+    for (const { heading, snippet, dlc, ...provenance } of rows) {
+      results.push({ title: provenance.title, heading, snippet, dlc: dlc === 1, provenance });
+    }
   }
   return results.length ? { results: results.slice(0, limit) } : noMatch(query, NO_SEARCH_HINT);
 }
@@ -75,18 +106,24 @@ const sectionNotFound = (r: Resolved, section: string, headings: string[]) => ({
   hint: `The page "${r.provenance.title}" exists but has no section matching "${section}". Ask again with one of the headings listed, or omit section for the whole page. This says nothing about whether the section's subject exists.`,
 });
 
-export function getPage(dbs: Dbs, title: string, section?: string) {
-  const r = resolveName(dbs, title);
-  if (!r) return notFound(title);
+export function getPage(dbs: Dbs, title: string, section?: string, mode: DlcMode = DEFAULT_DLC_MODE) {
+  const outcome = resolveFor(dbs, title, mode);
+  if (outcome.kind !== 'ok') return outcome.miss;
+  const r = outcome.resolved;
   const all = sectionsOf(r);
   if (!all.length) return emptyPage(title, r);
+  // A base page can still carry DLC prose in one of its sections; say so rather than let a base-mode
+  // answer read as if the snapshot had nothing on the DLC at all.
+  const hasDlcSections = (r.db.prepare('SELECT has_dlc_sections FROM pages WHERE id = ?').get(r.pageId) as { has_dlc_sections: number }).has_dlc_sections === 1;
   if (section) {
     const wanted = new RegExp(escapeRegex(section), 'i');
     const sections = all.filter((row) => wanted.test(row.heading));
     // An asked-for section that matches nothing is a section miss, never a missing page.
-    return sections.length ? { provenance: r.provenance, match: r.match, sections } : sectionNotFound(r, section, all.map((row) => row.heading));
+    return sections.length
+      ? { provenance: r.provenance, match: r.match, dlc: r.dlc, has_dlc_sections: hasDlcSections, sections }
+      : sectionNotFound(r, section, all.map((row) => row.heading));
   }
-  return withFragment(r, () => all, {});
+  return withFragment(r, () => all, { dlc: r.dlc, has_dlc_sections: hasDlcSections });
 }
 
 /** Stored prereqs are always a JSON array, but a malformed row must not take the whole answer down. */
@@ -99,25 +136,28 @@ function parsePrereqs(json: string): string[] {
   }
 }
 
-export function whereIs(dbs: Dbs, name: string) {
-  const r = resolveName(dbs, name);
-  if (!r) return notFound(name);
+export function whereIs(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE) {
+  const outcome = resolveFor(dbs, name, mode);
+  if (outcome.kind !== 'ok') return outcome.miss;
+  const r = outcome.resolved;
   const row = r.db.prepare('SELECT method, location_text, nearest_grace, prereqs, missable FROM acquisition WHERE page_id = ?').get(r.pageId) as
     { method: string; location_text: string; nearest_grace: string | null; prereqs: string; missable: number } | undefined;
   return {
     provenance: r.provenance,
     match: r.match,
+    dlc: r.dlc,
     acquisition: row ? { ...row, prereqs: parsePrereqs(row.prereqs), missable: row.missable === 1 } : null,
     sections: sectionsOf(r, /acquisition|location|where to find|how to get/i),
   };
 }
 
-export function questSteps(dbs: Dbs, npc: string) {
-  const r = resolveName(dbs, npc);
-  if (!r) return notFound(npc);
+export function questSteps(dbs: Dbs, npc: string, mode: DlcMode = DEFAULT_DLC_MODE) {
+  const outcome = resolveFor(dbs, npc, mode);
+  if (outcome.kind !== 'ok') return outcome.miss;
+  const r = outcome.resolved;
   const steps = r.db.prepare('SELECT step_ord, location, action, breaks_quest FROM quests WHERE page_id = ? ORDER BY step_ord').all(r.pageId) as QuestStep[];
   const notes = sectionsOf(r, /^notes$/i).flatMap((s) => s.markdown.split('\n')).filter((line) => BREAK_PATTERN.test(line));
-  return { provenance: r.provenance, match: r.match, steps, warnings: notes, ...(steps.length ? {} : { sections: sectionsOf(r, /quest/i) }) };
+  return { provenance: r.provenance, match: r.match, dlc: r.dlc, steps, warnings: notes, ...(steps.length ? {} : { sections: sectionsOf(r, /quest/i) }) };
 }
 
 const KIND_TABLE = { weapon: 'weapons', spell: 'spells', talisman: 'talismans', armor: 'armor' } as const;
@@ -139,18 +179,19 @@ export interface FilterError { error: 'invalid_filter' | 'kind_mismatch'; detail
 
 const invalidFilter = (detail: string): FilterError => ({ error: 'invalid_filter', detail });
 
-export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scaling_stat?: Stat; min_scaling?: string; max_req?: Partial<Record<Stat, number>>; limit?: number }) {
+export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scaling_stat?: Stat; min_scaling?: string; max_req?: Partial<Record<Stat, number>>; limit?: number }, mode: DlcMode = DEFAULT_DLC_MODE) {
   const limit = filter.limit ?? 25;
   if (filter.name) {
-    const r = resolveName(dbs, filter.name);
-    if (!r) return notFound(filter.name);
+    const outcome = resolveFor(dbs, filter.name, mode);
+    if (outcome.kind !== 'ok') return outcome.miss;
+    const r = outcome.resolved;
     const rows = (Object.entries(KIND_TABLE) as [Kind, string][]).flatMap(([kind, table]) =>
       (r.db.prepare(`SELECT * FROM ${table} WHERE page_id = ?`).all(r.pageId) as Record<string, unknown>[]).map((row) => ({ kind, ...row, provenance: r.provenance })));
     if (!rows.length) return notFound(filter.name);
-    if (!filter.kind) return { rows };
+    if (!filter.kind) return { rows, dlc: r.dlc };
     // name + kind used to ignore kind, so asking for the spell "Uchigatana" handed back the katana.
     const matching = rows.filter((row) => row.kind === filter.kind);
-    if (matching.length) return { rows: matching };
+    if (matching.length) return { rows: matching, dlc: r.dlc };
     const kinds = [...new Set(rows.map((row) => row.kind))].join(', ');
     return { error: 'kind_mismatch' as const, detail: `"${r.provenance.title}" is in the data as ${kinds}, not as a ${filter.kind}. Drop kind, or ask for the kind it actually is.` };
   }
@@ -176,15 +217,22 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
       if (maxReq.some(([stat]) => !REQ_STATS[kind].includes(stat))) continue;
       const where: string[] = [];
       const params: (string | number)[] = [];
+      // The join to pages puts a second table in scope, so every column here carries the `t.` prefix.
+      // A bare column still resolves today only because pages happens to share no name with an item
+      // table; adding one would silently repoint the filter rather than fail.
       if (scaling) {
-        where.push(`${scaling.stat}_scale IN (${scaling.allowed.map(() => '?').join(', ')})`);
+        where.push(`t.${scaling.stat}_scale IN (${scaling.allowed.map(() => '?').join(', ')})`);
         params.push(...scaling.allowed);
       }
       // An unparsed requirement is unknown, not free: coalesce(…, 0) answered "usable at 0 STR" for
       // Celebrant's Skull and Unarmed. Exclude unknowns rather than assert them.
-      for (const [stat, max] of maxReq) { where.push(`${stat}_req IS NOT NULL AND ${stat}_req <= ?`); params.push(max); }
-      const sql = `SELECT * FROM ${KIND_TABLE[kind]}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY name LIMIT ?`;
-      for (const row of db.prepare(sql).all(...params, limit) as Record<string, unknown>[]) rows.push({ kind, ...row, provenance: provenanceOf(db, row.page_id as number) });
+      for (const [stat, max] of maxReq) { where.push(`t.${stat}_req IS NOT NULL AND t.${stat}_req <= ?`); params.push(max); }
+      // p.dlc rides along: in all mode the result set mixes base and DLC items, and a row with no
+      // marker reads as base game.
+      const sql = `SELECT t.*, p.dlc FROM ${KIND_TABLE[kind]} t JOIN pages p ON p.id = t.page_id WHERE ${[...where, dlcPredicate(mode, 'p')].join(' AND ')} ORDER BY t.name LIMIT ?`;
+      for (const { dlc, ...item } of db.prepare(sql).all(...params, limit) as (Record<string, unknown> & { dlc: number })[]) {
+        rows.push({ kind, ...item, dlc: dlc === 1, provenance: provenanceOf(db, item.page_id as number) });
+      }
     }
   }
   if (rows.length) return { rows: rows.slice(0, limit) };
@@ -192,19 +240,27 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
     'No item in the snapshot matches every filter. Loosen them (raise max_req, lower min_scaling, drop kind). Items whose requirement the wiki does not state are excluded from max_req filters rather than counted as zero.');
 }
 
-export function bossInfo(dbs: Dbs, name: string) {
-  const r = resolveName(dbs, name);
-  if (!r) return notFound(name);
+export function bossInfo(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE) {
+  const outcome = resolveFor(dbs, name, mode);
+  if (outcome.kind !== 'ok') return outcome.miss;
+  const r = outcome.resolved;
   const boss = (r.db.prepare('SELECT name, location, hp, runes, drops FROM bosses WHERE page_id = ?').get(r.pageId) as Record<string, unknown> | undefined) ?? null;
   const usual = /overview|location|strateg|weakness|resist/i;
-  return withFragment(r, () => sectionsOf(r, usual), { boss });
+  return withFragment(r, () => sectionsOf(r, usual), { boss, dlc: r.dlc });
 }
 
 export function sourcesStatus(dbs: Dbs) {
   const count = (db: Db, sql: string) => (db.prepare(sql).get() as { n: number }).n;
   return {
     shipped: dbs.shipped
-      ? { sync: dbs.shipped.prepare('SELECT source, last_run, pages FROM sync_state').all(), pages: count(dbs.shipped, 'SELECT count(*) AS n FROM pages'), failures: count(dbs.shipped, 'SELECT count(*) AS n FROM extract_failures') }
+      ? {
+          sync: dbs.shipped.prepare('SELECT source, last_run, pages FROM sync_state').all(),
+          pages: count(dbs.shipped, 'SELECT count(*) AS n FROM pages'),
+          base_pages: count(dbs.shipped, 'SELECT count(*) AS n FROM pages WHERE dlc = 0'),
+          dlc_pages: count(dbs.shipped, 'SELECT count(*) AS n FROM pages WHERE dlc = 1'),
+          dlc_signals: dbs.shipped.prepare('SELECT signal, hits, at FROM dlc_report ORDER BY signal').all(),
+          failures: count(dbs.shipped, 'SELECT count(*) AS n FROM extract_failures'),
+        }
       : null,
     local: dbs.local ? { pages: count(dbs.local, 'SELECT count(*) AS n FROM pages') } : null,
   };
