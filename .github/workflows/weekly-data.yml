@@ -15,7 +15,6 @@ jobs:
         with: { node-version: 24, cache: npm }
       - run: npm ci
       - name: Restore previous db
-        env: { GH_TOKEN: '${{ github.token }}' }
         run: npm run fetch-data || echo "no previous release; full build"
       - run: npm run build
       - run: npm run attribution
@@ -23,7 +22,8 @@ jobs:
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
           TAG="data-$(date -u +%Y.%m.%d)"
-          gh release create "$TAG" data/elden-ring.db --title "$TAG" --notes-file data/CHANGELOG-data.md
+          awk '/^## /{n++} n==1' data/CHANGELOG-data.md > /tmp/release-notes.md
+          gh release create "$TAG" data/elden-ring.db --title "$TAG" --notes-file /tmp/release-notes.md
       - name: Open PR with changelog
         uses: peter-evans/create-pull-request@v6
         with:
