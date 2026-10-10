@@ -11,6 +11,7 @@ import { isDlcFiltered, resolveName, type Provenance } from '../src/query/resolv
 import { bossInfo, getPage, itemStats, questSteps, search, sourcesStatus, whereIs } from '../src/query/lookups.js';
 import { dlcPredicate, openDbs, STALE_DETAIL } from '../src/query/dbs.js';
 import type { Dbs } from '../src/query/dbs.js';
+import { loadBossNotes, setBossNotes, type BossEncounter, type BossNotes } from '../src/query/boss-notes.js';
 
 const dbs = (): Dbs => ({ shipped: buildFixtureDb(), local: null });
 
@@ -720,4 +721,57 @@ test('a dlc-gated page yields to a permitted copy of the same title in the other
   // Nothing to yield to: the gate is the honest answer again.
   const gated = getPage({ shipped, local: null }, 'Verdigris Armor') as { reason?: string };
   assert.equal(gated.reason, 'dlc_filtered');
+});
+
+const RADAHN_NOTES: BossNotes = new Map([['starscourge radahn', [
+  { encounter: 'Starscourge Radahn', dlc: false, parryable: 'no', checked_against: 'https://x/base', checked: '2026-10-09' },
+  { encounter: 'Promised Consort Radahn', aliases: ['Radahn, Consort of Miquella'], dlc: true, parryable: 'yes', detail: '3 per stance break', checked_against: 'https://x/dlc', checked: '2026-10-09' },
+] as BossEncounter[]]]);
+
+function radahnDbs(): Dbs {
+  const d = fixtureDbs([{ title: 'Starscourge Radahn', wikitext: '{{Infobox Boss\n| parry = <!-- yes or no -->\n}}\nGeneral Radahn.', dlc: 0 }]);
+  replaceRedirects(d.shipped!, 'fandom', [{ from: 'Promised Consort Radahn', to: 'Starscourge Radahn', fragment: null }]);
+  return d;
+}
+
+test('bossInfo attaches per-encounter parry notes and marks the one the name asked for', (t) => {
+  setBossNotes(RADAHN_NOTES);
+  t.after(() => setBossNotes(null));
+  const result = bossInfo(radahnDbs(), 'Promised Consort Radahn', 'all') as any;
+  assert.equal(result.parry.fandom, null);
+  assert.deepEqual(result.parry.encounters.map((e: any) => [e.encounter, e.parryable, e.matched ?? false]),
+    [['Starscourge Radahn', 'no', false], ['Promised Consort Radahn', 'yes', true]]);
+});
+
+test('bossInfo hides DLC encounters in base mode and says so', (t) => {
+  setBossNotes(RADAHN_NOTES);
+  t.after(() => setBossNotes(null));
+  const result = bossInfo(radahnDbs(), 'Promised Consort Radahn') as any;
+  assert.deepEqual(result.parry.encounters.map((e: any) => e.encounter), ['Starscourge Radahn']);
+  assert.equal(result.parry.hidden_encounters, 1);
+  assert.match(result.parry.hint, /"Promised Consort Radahn" is the fight asked about.*dlc: "all"/);
+});
+
+test('bossInfo flags a note that contradicts the page, and survives no notes at all', (t) => {
+  t.after(() => setBossNotes(null));
+  const d = fixtureDbs([{ title: 'Margit', wikitext: '{{Infobox Boss\n| parry = no\n}}', dlc: 0 }]);
+  setBossNotes(new Map([['margit', [{ encounter: 'Margit', dlc: false, parryable: 'yes', checked_against: 'https://x', checked: '2026-10-09' } as BossEncounter]]]));
+  const flagged = bossInfo(d, 'Margit') as any;
+  assert.equal(flagged.parry.fandom, 'no');
+  assert.equal(flagged.parry.encounters[0].fandom_disagrees, true);
+  setBossNotes(loadBossNotes('/nonexistent/boss-notes.json'));
+  assert.deepEqual(bossInfo(d, 'Margit') as any, { ...(bossInfo(d, 'Margit') as any), parry: { fandom: 'no', encounters: null } });
+});
+
+test('shipped boss-notes.json: every encounter is checked, dated and well-formed', () => {
+  const notes = loadBossNotes();
+  assert.ok(notes.size > 0);
+  for (const [title, encounters] of notes) {
+    for (const e of encounters) {
+      assert.ok(['yes', 'no', 'some'].includes(e.parryable), `${title}: parryable`);
+      assert.equal(typeof e.dlc, 'boolean', `${title}: dlc`);
+      assert.match(e.checked_against, /^https:\/\//, `${title}: checked_against`);
+      assert.match(e.checked, /^\d{4}-\d{2}-\d{2}$/, `${title}: checked`);
+    }
+  }
 });

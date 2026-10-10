@@ -126,7 +126,7 @@ server.registerTool('item_stats', {
 
 server.registerTool('boss', {
   title: 'Boss info',
-  description: 'Boss location, HP, runes and drops from the wiki infobox, plus overview/strategy/weakness sections. Names that redirect to a section of a shared page (e.g. "Magma Wyrm Makar") return that section.',
+  description: 'Boss location, HP, runes and drops from the wiki infobox, plus overview/strategy/weakness sections. Names that redirect to a section of a shared page (e.g. "Magma Wyrm Makar") return that section. `parry` (null when nothing is known) holds `fandom` (the wiki page\'s own yes/no claim, usually blank) and `encounters`: hand-checked notes per fight, with parryable yes/no/some, detail, exceptions and the page they were checked against (cite it). One page can cover two fights (Starscourge vs Promised Consort Radahn); `matched: true` marks the one the name asked for, and `hidden_encounters` counts fights the dlc mode excluded.',
   inputSchema: { name: z.string().min(1), fetch: fetchArg, dlc: dlcArg },
   annotations: MAY_FETCH,
 }, async ({ name, fetch, dlc }) => withFetch(name, fetch, () => bossInfo(dbs, name, dlc, { preferLocal: fetch === true })));

@@ -30,10 +30,12 @@ Add to Claude Code (`.mcp.json`, see `.mcp.json.example`):
 | `where_is` | how to get an item, nearest grace, prerequisites, missable |
 | `quest_steps` | ordered NPC quest steps + quest-breakers |
 | `item_stats` | requirements/scaling; filter by stat and scaling letter |
-| `boss` | location, HP, runes, drops, strategy sections |
+| `boss` | location, HP, runes, drops, strategy sections, parry (per encounter) |
 | `sources_status` | data freshness, base/DLC counts, classifier signals |
 
 `get_page`, `where_is`, `quest_steps` and `boss` accept `fetch: true` to cache the matching Fextralife page on your machine (`~/.cache/elden-ring-mcp/`). That cache is never committed or shared. Fextralife is fetched one page per request, at most one request per second and at most 20 pages per server process, so it can never be bulk-crawled.
+
+`boss` returns `parry` from two sources, side by side: the Fandom page's own claim (usually blank) and hand-checked notes in `data/boss-notes.json`. Notes are per encounter, so one page that covers two fights (Starscourge vs Promised Consort Radahn) keeps them apart. Each note cites the page it was checked against. Facts are paraphrased, never copied. Edit the file and restart the server; no re-extract needed.
 
 Nothing matched is always explicit: `not_found` (no page, no search hit, no item matching the filters) or `section_not_found` (the page exists, the section does not - the result lists the page's real headings). `item_stats` excludes items whose requirement the wiki does not state rather than reporting them as free.
 

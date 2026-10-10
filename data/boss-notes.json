@@ -1,0 +1,69 @@
+{
+  "_comment": "Hand-checked boss facts the Fandom snapshot lacks, keyed by Fandom page title. Each page lists its encounters, so one page covering two fights (Starscourge vs Promised Consort Radahn) keeps them apart. Facts are restated in our own words; checked_against is the page they were verified on. Fextralife is copyright and never copied here - only the yes/no fact and a short paraphrase. parryable: yes | no | some (only specific attacks or tools).",
+  "pages": {
+    "Starscourge Radahn": [
+      { "encounter": "Starscourge Radahn", "dlc": false, "parryable": "no", "checked_against": "https://eldenring.wiki.fextralife.com/Starscourge+Radahn", "checked": "2026-10-09" },
+      { "encounter": "Promised Consort Radahn", "aliases": ["Radahn, Consort of Miquella"], "dlc": true, "parryable": "yes", "detail": "Both phases. Takes 3 parries per stance break before a riposte. Riposting into the phase change skips the teleport back to the start.", "checked_against": "https://eldenring.wiki.fextralife.com/Promised+Consort+Radahn", "checked": "2026-10-09" }
+    ],
+    "Messmer the Impaler": [
+      { "encounter": "Messmer the Impaler", "dlc": true, "parryable": "yes", "detail": "3 parries per stance break.", "checked_against": "https://eldenring.wiki.fextralife.com/Messmer+the+Impaler", "checked": "2026-10-09" }
+    ],
+    "Rellana, Twin Moon Knight": [
+      { "encounter": "Rellana, Twin Moon Knight", "dlc": true, "parryable": "yes", "detail": "2 parries per stance break.", "checked_against": "https://eldenring.wiki.fextralife.com/Rellana+Twin+Moon+Knight", "checked": "2026-10-09" }
+    ],
+    "Midra, Lord of Frenzied Flame": [
+      { "encounter": "Midra, Lord of Frenzied Flame", "dlc": true, "parryable": "yes", "detail": "3 parries per stance break.", "checked_against": "https://eldenring.wiki.fextralife.com/Midra+Lord+of+Frenzied+Flame", "checked": "2026-10-09" }
+    ],
+    "Romina, Saint of the Bud": [
+      { "encounter": "Romina, Saint of the Bud", "dlc": true, "parryable": "yes", "checked_against": "https://eldenring.wiki.fextralife.com/Romina+Saint+of+the+Bud", "checked": "2026-10-09" }
+    ],
+    "Scadutree Avatar": [
+      { "encounter": "Scadutree Avatar", "dlc": true, "parryable": "some", "detail": "Melee parries do nothing. Its spells can be deflected with a magic parry.", "checked_against": "https://eldenring.wiki.fextralife.com/Scadutree+Avatar", "checked": "2026-10-09" }
+    ],
+    "Bayle the Dread": [
+      { "encounter": "Bayle the Dread", "dlc": true, "parryable": "no", "checked_against": "https://eldenring.wiki.fextralife.com/Bayle+the+Dread", "checked": "2026-10-09" }
+    ],
+    "Commander Gaius": [
+      { "encounter": "Commander Gaius", "dlc": true, "parryable": "no", "checked_against": "https://eldenring.wiki.fextralife.com/Commander+Gaius", "checked": "2026-10-09" }
+    ],
+    "Putrescent Knight": [
+      { "encounter": "Putrescent Knight", "dlc": true, "parryable": "no", "checked_against": "https://eldenring.wiki.fextralife.com/Putrescent+Knight", "checked": "2026-10-09" }
+    ],
+    "Metyr, Mother of Fingers": [
+      { "encounter": "Metyr, Mother of Fingers", "dlc": true, "parryable": "no", "checked_against": "https://eldenring.wiki.fextralife.com/Metyr+Mother+of+Fingers", "checked": "2026-10-09" }
+    ],
+    "Divine Beast Dancing Lion": [
+      { "encounter": "Divine Beast Dancing Lion", "dlc": true, "parryable": "no", "checked_against": "https://eldenring.wiki.fextralife.com/Divine+Beast+Dancing+Lion", "checked": "2026-10-09" }
+    ],
+    "Golden Hippopotamus (boss)": [
+      { "encounter": "Golden Hippopotamus", "dlc": true, "parryable": "no", "checked_against": "https://eldenring.wiki.fextralife.com/Golden+Hippopotamus", "checked": "2026-10-09" }
+    ],
+    "Margit, the Fell Omen": [
+      { "encounter": "Margit, the Fell Omen", "dlc": false, "parryable": "yes", "detail": "2 parries per stance break. Cane swings are parryable; the glowing magic weapons (dagger, hammer, sword) are not, so in Hammer Strike and Sword Spin only the cane part counts.", "checked_against": "https://eldenring.wiki.fextralife.com/Margit+the+Fell+Omen", "checked": "2026-10-09" }
+    ],
+    "Morgott, the Omen King": [
+      { "encounter": "Morgott, the Omen King", "dlc": false, "parryable": "yes", "detail": "3 parries per stance break. Parrying Cursed-Blood Slice blocks its damage but does not count toward the 3.", "checked_against": "https://eldenring.wiki.fextralife.com/Morgott+the+Omen+King", "checked": "2026-10-09" }
+    ],
+    "Malenia, Blade of Miquella": [
+      { "encounter": "Malenia, Blade of Miquella", "dlc": false, "parryable": "yes", "detail": "3 parries per stance break. Opening spin, thrust and rapid prosthesis slices are parryable. Waterfowl Dance is block-only.", "exceptions": ["Kick: cannot be parried", "Lunging grab: cannot be blocked or parried"], "checked_against": "https://eldenring.wiki.fextralife.com/Malenia+Blade+of+Miquella", "checked": "2026-10-09" }
+    ],
+    "Radagon of the Golden Order": [
+      { "encounter": "Radagon of the Golden Order", "dlc": false, "parryable": "yes", "detail": "3 parries per stance break. He has his own parry stance that deflects melee and ranged hits; spells that don't target him directly, jump attacks, whips and flails get through it.", "checked_against": "https://eldenring.wiki.fextralife.com/Radagon+of+the+Golden+Order", "checked": "2026-10-09" }
+    ],
+    "Maliketh, the Black Blade": [
+      { "encounter": "Maliketh, the Black Blade", "dlc": false, "parryable": "some", "detail": "Only with the Blasphemous Claw, and only against his Black Blade attacks (the slash and dive finishers) plus a short window in the vertical double spin. Parrying the dive gives a longer stun than the slash.", "checked_against": "https://eldenring.wiki.fextralife.com/Maliketh,+the+Black+Blade", "checked": "2026-10-09" }
+    ],
+    "Mohg, Lord of Blood": [
+      { "encounter": "Mohg, Lord of Blood", "dlc": false, "parryable": "no", "exceptions": ["The shower version of Bloodboon can be parried with Carian Retaliation"], "checked_against": "https://eldenring.wiki.fextralife.com/Mohg,+Lord+of+Blood", "checked": "2026-10-09" }
+    ],
+    "Godrick the Grafted": [
+      { "encounter": "Godrick the Grafted", "dlc": false, "parryable": "no", "checked_against": "https://eldenring.wiki.fextralife.com/Godrick+the+Grafted", "checked": "2026-10-09" }
+    ],
+    "Godfrey, First Elden Lord": [
+      { "encounter": "Godfrey, First Elden Lord", "dlc": false, "parryable": "no", "detail": "Stated for the first phase only; the Hoarah Loux phase has no parry line on the checked page.", "checked_against": "https://eldenring.wiki.fextralife.com/Godfrey,+First+Elden+Lord", "checked": "2026-10-09" }
+    ],
+    "Fire Giant": [
+      { "encounter": "Fire Giant", "dlc": false, "parryable": "no", "checked_against": "https://eldenring.wiki.fextralife.com/Fire+Giant", "checked": "2026-10-09" }
+    ]
+  }
+}

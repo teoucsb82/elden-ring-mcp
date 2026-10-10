@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { memoryDb } from './helpers.js';
 import { upsertPage } from '../src/store/pages.js';
 import { runExtractors } from '../src/extract/run.js';
+import { parryFromWikitext } from '../src/extract/boss.js';
 import type { RawPage } from '../src/types.js';
 import { AZUR_CROWN, AZUR_STAFF, COMET_AZUR, GRAVEN_SCHOOL, MALFORMED, RED_WOLF, SELLEN_QUEST } from './fixtures/wikitext.js';
 
@@ -72,4 +73,15 @@ test('pageIds limits the run', () => {
   const report = runExtractors(db, { pageIds: [id] });
   assert.equal(report.pages, 1);
   assert.equal((db.prepare('SELECT count(*) AS n FROM weapons').get() as { n: number }).n, 0);
+});
+
+test('parryFromWikitext reads the infobox field, then the stats bullet, else null', () => {
+  assert.equal(parryFromWikitext('{{Infobox Boss\n| parry = yes\n| crit = yes\n}}'), 'yes');
+  assert.equal(parryFromWikitext('{{Infobox Boss\n| parry = No\n}}'), 'no');
+  // The template ships a comment placeholder; it is not a claim either way.
+  assert.equal(parryFromWikitext('{{Infobox Boss\n| parry = <!-- yes or no -->\n}}'), null);
+  assert.equal(parryFromWikitext('{{Infobox Boss\n| parry = \n}}\n* Cannot be [[Parrying|parried]]'), 'no');
+  assert.equal(parryFromWikitext('* Can be [[parried]] three times'), 'yes');
+  assert.equal(parryFromWikitext('Nothing about it here.'), null);
+  assert.equal(parryFromWikitext(null), null);
 });

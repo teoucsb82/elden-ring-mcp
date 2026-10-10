@@ -22,3 +22,20 @@ export const bossExtractor: Extractor = {
     addEntity(db, page.id, 'boss', name);
   },
 };
+
+export type ParryVerdict = 'yes' | 'no' | null;
+
+/**
+ * The wiki's own parry claim: the infobox `parry` field first (most are left blank), then the stats
+ * bullet ("Cannot be [[Parrying|parried]]"). null means the page says nothing, not "no".
+ */
+export function parryFromWikitext(wikitext: string | null): ParryVerdict {
+  if (!wikitext) return null;
+  const field = findInfobox(wikitext, ['Infobox Boss', 'Infobox Character'])?.params.parry?.trim().toLowerCase();
+  if (field?.startsWith('yes')) return 'yes';
+  if (field?.startsWith('no')) return 'no';
+  const plain = wikitext.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, '$1');
+  if (/^\s*\*\s*cannot be parried\b/im.test(plain)) return 'no';
+  if (/^\s*\*\s*can be parried\b/im.test(plain)) return 'yes';
+  return null;
+}

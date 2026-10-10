@@ -1,6 +1,8 @@
 import type { Db } from '../db/open.js';
 import { SCALING_ORDER } from '../extract/common.js';
+import { parryFromWikitext } from '../extract/boss.js';
 import { BREAK_PATTERN, type QuestStep } from '../extract/quest.js';
+import { bossNotes, encountersFor, namesQuery } from './boss-notes.js';
 import { DEFAULT_DLC_MODE, dlcOf, dlcPredicate, type Dbs, type DlcMode } from './dbs.js';
 import { ftsQuery, isDlcFiltered, resolveName, type DlcFiltered, type Provenance, type ResolveOptions, type Resolved } from './resolve.js';
 
@@ -312,7 +314,40 @@ export function bossInfo(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MOD
   const r = outcome.resolved;
   const boss = (r.db.prepare('SELECT name, location, hp, runes, drops FROM bosses WHERE page_id = ?').get(r.pageId) as Record<string, unknown> | undefined) ?? null;
   const usual = /overview|location|strateg|weakness|resist/i;
-  return withFragment(r, () => sectionsOf(r, usual), { boss, dlc: r.dlc, has_dlc_sections: r.hasDlcSections });
+  const parry = parryOf(r, name, mode);
+  return withFragment(r, () => sectionsOf(r, usual), { boss, parry, dlc: r.dlc, has_dlc_sections: r.hasDlcSections });
+}
+
+/**
+ * Two sources, never merged into one verdict: the page's own claim (Fandom, usually blank) and the
+ * hand-checked notes. One Fandom page can hold two fights (Starscourge and Promised Consort Radahn),
+ * so notes are per encounter, filtered by the caller's dlc mode like everything else.
+ */
+function parryOf(r: Resolved, query: string, mode: DlcMode) {
+  const row = r.db.prepare('SELECT wikitext FROM pages WHERE id = ?').get(r.pageId) as { wikitext: string | null } | undefined;
+  const fandom = r.provenance.source === 'fandom' ? parryFromWikitext(row?.wikitext ?? null) : null;
+  const all = encountersFor(bossNotes(), r.provenance.title, query);
+  if (!fandom && !all) return null;
+  const shown = (all ?? []).filter((e) => mode === 'all' || e.dlc === (mode === 'only'));
+  const hidden = (all?.length ?? 0) - shown.length;
+  // The worst miss: the fight the caller named is the hidden one, so what's left answers a different fight.
+  const askedHidden = (all ?? []).find((e) => !shown.includes(e) && namesQuery(e, query));
+  const encounters = shown.map((e) => ({
+    ...e,
+    ...(namesQuery(e, query) ? { matched: true } : {}),
+    // Only a one-fight page can be compared: on a two-fight page the wiki's claim names no fight.
+    ...(fandom && all?.length === 1 && e.parryable !== 'some' && e.parryable !== fandom ? { fandom_disagrees: true } : {}),
+  }));
+  return {
+    fandom,
+    encounters: encounters.length ? encounters : null,
+    ...(hidden ? {
+      hidden_encounters: hidden,
+      hint: askedHidden
+        ? `"${askedHidden.encounter}" is the fight asked about, and dlc mode "${mode}" excluded it; the encounters shown are a different fight. Re-run with dlc: "all".`
+        : `${hidden} encounter${hidden === 1 ? '' : 's'} on this page ${hidden === 1 ? 'is' : 'are'} excluded by dlc mode "${mode}". Re-run with dlc: "all" to see ${hidden === 1 ? 'it' : 'them'}.`,
+    } : {}),
+  };
 }
 
 export function sourcesStatus(dbs: Dbs) {
