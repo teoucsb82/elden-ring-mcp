@@ -29,11 +29,14 @@ Add to Claude Code (`.mcp.json`, see `.mcp.json.example`):
 | `get_page` | a page or one section as markdown |
 | `where_is` | how to get an item, nearest grace, prerequisites, missable |
 | `quest_steps` | ordered NPC quest steps + quest-breakers |
-| `item_stats` | requirements/scaling; filter by stat and scaling letter |
+| `item_stats` | requirements/scaling; filter by stat and scaling letter; `kind: "item"` for tools, Ashes of War, crystal tears |
+| `build` | Fextralife builds from your local cache: one by name, or filter by stat, item, weapon, dlc |
 | `boss` | location, HP, runes, drops, strategy sections, parry (per encounter) |
 | `sources_status` | data freshness, base/DLC counts, classifier signals |
 
-`get_page`, `where_is`, `quest_steps` and `boss` accept `fetch: true` to cache the matching Fextralife page on your machine (`~/.cache/elden-ring-mcp/`). That cache is never committed or shared. Fextralife is fetched one page per request, at most one request per second and at most 20 pages per server process, so it can never be bulk-crawled.
+`get_page`, `where_is`, `quest_steps` and `boss` accept `fetch: true` to cache the matching Fextralife page on your machine (`~/.cache/elden-ring-mcp/`). That cache is never committed or shared. The server fetches Fextralife one page per request, at most one request per second and at most 20 pages per process.
+
+`npm run fetch-builds` is the one exception: it caches every build page listed on Fextralife's Builds index (about 170) into the same local cache, one request every 3 seconds, skipping pages already cached, and stops at the first 403/429. Fextralife's robots.txt prohibits automated retrieval, so running it is your call; nothing it fetches is ever committed or shipped. `npm run parse-builds` re-parses the cached pages offline.
 
 `boss` returns `parry` from two sources, side by side: the Fandom page's own claim (usually blank) and hand-checked notes in `data/boss-notes.json`. Notes are per encounter, so one page that covers two fights (Starscourge vs Promised Consort Radahn) keeps them apart. Each note cites the page it was checked against. Facts are paraphrased, never copied. Edit the file and restart the server; no re-extract needed.
 

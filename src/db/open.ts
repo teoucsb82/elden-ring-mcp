@@ -7,7 +7,7 @@ const SCHEMA = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 export type Db = Database.Database;
 
 /** Tables whose rows are derived from a page by extractors; all keyed by page_id. */
-export const DERIVED_TABLES = ['entities', 'weapons', 'spells', 'talismans', 'armor', 'bosses', 'acquisition', 'quests', 'extract_failures'] as const;
+export const DERIVED_TABLES = ['entities', 'weapons', 'spells', 'talismans', 'armor', 'items', 'missing_data', 'builds', 'build_items', 'bosses', 'acquisition', 'quests', 'extract_failures'] as const;
 
 /** Columns added after the initial schema. CREATE TABLE IF NOT EXISTS will not add them to an existing table. */
 const PAGE_MIGRATIONS: { column: string; ddl: string }[] = [

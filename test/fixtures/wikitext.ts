@@ -246,3 +246,63 @@ export const MALFORMED = `{{Infobox Weapon
 | title = Broken Page
 | int_req = 12
 `;
+
+export const ROCK_HEART = `{{Infobox Item
+|title = Rock Heart
+|image=ER Icon Tool Rock Heart.png
+|item_effect=Transforms the user's body into rock, raising poise
+|type=Tool
+|obtained= [[Jagged Peak]]
+}}
+'''{{PAGENAME}}''' is a [[reusable tool]] in {{SotE}}.
+
+==Acquisition==
+* Dropped by the [[Ancient Dragon Senessax]] at [[Jagged Peak]].
+`;
+
+export const LIONS_CLAW = `{{Infobox Item
+| title       = Ash of War: <br>Lion's Claw
+| type        = Ash of War
+| item_effect = Ash
+| affinity    = Heavy
+| fp_cost     = 20
+| obtained    = [[Stormhill]]
+}}
+'''Lion's Claw''' is an [[Ashes of War|Ash of War]] in {{ER}}.
+`;
+
+export const OPALINE_HARDTEAR = `{{Infobox Item
+| title       = Opaline Hardtear
+| type        = Key Item
+| sub_type    = [[Crystal Tear]]
+| item_effect = Temporarily boosts all damage negation in physick
+| obtained    = [[Putrid Avatar]]
+}}
+'''Opaline Hardtear''' is a [[Crystal Tear]] in {{ER}}.
+`;
+
+/** Fandom's own gap marker: stats blank, acquisition a placeholder. Every real DLC armor page missing stats looks like this. */
+export const RELLANA_ARMOR = `{{missing data|stats, location}}{{Infobox Armor
+| type       = Chest
+| title      = Rellana's Armor
+| weight     = 
+| effects    = 
+| poise      = 
+}}
+
+'''{{PAGENAME}}''' is [[Chest Armor]] in {{ER}}<i>:</i> {{SotE}}.
+
+==Acquisition==
+'''Location''': 
+* <!--Acquisition details here-->
+`;
+
+/** Mentions a Horned Warrior, so a full-text guess for "Horned Warrior Gauntlets" lands here. */
+export const DIVINE_BIRD_GAUNTLETS = `{{Infobox Armor
+| type       = arms
+| title      = Divine Bird Warrior Gauntlets
+| weight     = 3.5
+| poise      = 5
+}}
+'''Divine Bird Warrior Gauntlets''' are gauntlets worn alongside the Horned Warrior.
+`;

@@ -9,5 +9,7 @@ export interface RawPage {
   fetchedAt: string;
   wikitext: string | null;
   markdown: string | null;
+  /** Fextralife only: the page as fetched, kept in the local cache so parsers can re-run without a re-fetch. */
+  html?: string | null;
   license: string;
 }

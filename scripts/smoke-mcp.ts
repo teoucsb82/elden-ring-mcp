@@ -28,7 +28,7 @@ const check = (ok: boolean, message: string) => { if (!ok) failures++; console.l
 
 const { tools } = await client.listTools();
 const toolChars = JSON.stringify(tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))).length;
-check(tools.length === 7, `${tools.length} tools: ${tools.map((t) => t.name).join(', ')}`);
+check(tools.length === 8, `${tools.length} tools: ${tools.map((t) => t.name).join(', ')}`);
 check(toolChars <= TOOL_LIST_BUDGET, `tool list ${toolChars} chars (budget ${TOOL_LIST_BUDGET})`);
 
 const calls: [string, Record<string, unknown>][] = process.env.SMOKE_CALLS
@@ -49,6 +49,11 @@ for (const [name, args] of calls) {
   check(!result.isError && !text.includes('"not_found":true') && (name === 'sources_status' || text.includes('"provenance"')), `${name} ${JSON.stringify(args)} (${text.length} chars)`);
   console.log(`     ${text.slice(0, 300)}`);
 }
+
+// The smoke cache is empty, so build must say how to fill it rather than fail.
+const build = await client.callTool({ name: 'build', arguments: { name: 'Samurai' } });
+const buildText = (build.content as { text?: string }[]).map((part) => part.text ?? '').join('\n');
+check(!build.isError && buildText.includes('fetch-builds'), `build on an empty cache names fetch-builds (${buildText.length} chars)`);
 
 await client.close();
 process.exit(failures ? 1 : 0);

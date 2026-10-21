@@ -33,12 +33,20 @@ export function parseAcquisition(markdown: string): Acquisition {
   return { method: detectMethod(markdown), location_text: markdown, nearest_grace, prereqs, missable };
 }
 
+/**
+ * A section that only holds a label and a dash or question mark ("**Location**: -"): the wiki's
+ * template was never filled in. Storing it made where_is answer with an empty location.
+ */
+export function isPlaceholder(markdown: string): boolean {
+  return markdown.replace(/\*\*[^*]*\*\*:?/g, '').replace(/[-?:*\s]/g, '') === '';
+}
+
 export const acquisitionExtractor: Extractor = {
   name: 'acquisition',
   matches: (page) => !!page.wikitext && findInfobox(page.wikitext, ITEM_INFOBOXES) !== null,
   write(db, page) {
     const markdown = sectionMarkdown(db, page.id, ACQUISITION_HEADING);
-    if (!markdown) return;
+    if (!markdown || isPlaceholder(markdown)) return;
     const a = parseAcquisition(markdown);
     db.prepare('INSERT INTO acquisition (page_id, method, location_text, nearest_grace, prereqs, missable) VALUES (?, ?, ?, ?, ?, ?)')
       .run(page.id, a.method, a.location_text, a.nearest_grace, JSON.stringify(a.prereqs), a.missable ? 1 : 0);

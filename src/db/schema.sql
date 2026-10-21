@@ -10,6 +10,11 @@ CREATE TABLE IF NOT EXISTS pages (
   wikitext TEXT,
   UNIQUE (source, title)
 );
+-- Fextralife pages as fetched. Local cache only: the shipped snapshot never holds a Fextralife row.
+CREATE TABLE IF NOT EXISTS page_html (
+  page_id INTEGER PRIMARY KEY,
+  html TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sections (
   id INTEGER PRIMARY KEY,
   page_id INTEGER NOT NULL,
@@ -49,6 +54,29 @@ CREATE TABLE IF NOT EXISTS talismans (
 );
 CREATE TABLE IF NOT EXISTS armor (
   page_id INTEGER PRIMARY KEY, name TEXT NOT NULL, slot TEXT, weight REAL, poise REAL, effects TEXT
+);
+CREATE TABLE IF NOT EXISTS items (
+  page_id INTEGER PRIMARY KEY, name TEXT NOT NULL, item_type TEXT, sub_type TEXT,
+  effect TEXT, fp_cost TEXT, affinity TEXT, obtained TEXT
+);
+CREATE TABLE IF NOT EXISTS missing_data (
+  page_id INTEGER PRIMARY KEY, fields TEXT NOT NULL
+);
+-- Parsed Fextralife build pages. Local cache only, like every Fextralife row.
+CREATE TABLE IF NOT EXISTS builds (
+  page_id INTEGER PRIMARY KEY, name TEXT NOT NULL, tagline TEXT, class TEXT, level INTEGER, journey TEXT,
+  focus TEXT NOT NULL, playstyle TEXT, primary_stats TEXT NOT NULL, secondary_stats TEXT NOT NULL,
+  flask TEXT, min_stats TEXT NOT NULL, summary TEXT, notes TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS build_items (
+  page_id INTEGER NOT NULL, ord INTEGER NOT NULL, listed_as TEXT NOT NULL, name TEXT NOT NULL,
+  alternate INTEGER NOT NULL DEFAULT 0, affinity TEXT,
+  PRIMARY KEY (page_id, ord)
+);
+CREATE INDEX IF NOT EXISTS build_items_name ON build_items (name COLLATE NOCASE);
+-- Which index page listed each build ('Builds', 'SOTE Builds'): the DLC signal for a build.
+CREATE TABLE IF NOT EXISTS build_lists (
+  list TEXT NOT NULL, title TEXT NOT NULL, PRIMARY KEY (list, title)
 );
 CREATE TABLE IF NOT EXISTS bosses (
   page_id INTEGER PRIMARY KEY, name TEXT NOT NULL, location TEXT, hp TEXT, runes TEXT, drops TEXT

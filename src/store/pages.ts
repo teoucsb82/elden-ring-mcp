@@ -52,6 +52,7 @@ export function upsertPage(db: Db, page: RawPage): number {
     `).run({ source: page.source, title: page.title, url: page.url, revid: page.revid, fetchedAt: page.fetchedAt, license: page.license, wikitext: page.wikitext });
     const { id } = db.prepare('SELECT id FROM pages WHERE source = ? AND title = ?').get(page.source, page.title) as { id: number };
     writeSections(db, id, page.title, markdown);
+    if (page.html) db.prepare('INSERT OR REPLACE INTO page_html (page_id, html) VALUES (?, ?)').run(id, page.html);
     return id;
   })();
 }
@@ -62,6 +63,7 @@ export function deletePage(db: Db, source: SourceId, title: string): void {
   db.transaction(() => {
     clearSections(db, row.id);
     clearDerived(db, row.id);
+    db.prepare('DELETE FROM page_html WHERE page_id = ?').run(row.id);
     db.prepare('DELETE FROM pages WHERE id = ?').run(row.id);
   })();
 }

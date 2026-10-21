@@ -13,6 +13,8 @@
     "build": "tsx scripts/build.ts",
     "fetch-data": "tsx scripts/fetch-data.ts",
     "attribution": "tsx scripts/attribution.ts",
+    "fetch-builds": "tsx scripts/fetch-builds.ts",
+    "parse-builds": "tsx scripts/parse-builds.ts",
     "mcp": "tsx src/server/start.ts",
     "smoke": "tsx scripts/smoke-mcp.ts",
     "test": "node --import tsx --test test/*.test.ts",

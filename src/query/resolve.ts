@@ -81,7 +81,7 @@ const ftsHit = (db: Db, query: string, extra: string): PageRecord | undefined =>
     WHERE sections_fts MATCH ? AND ${extra} ORDER BY bm25(sections_fts, 10.0, 2.0, 1.0) LIMIT 1
   `).get(query) as PageRecord | undefined;
 
-function resolveIn(db: Db, name: string, mode: DlcMode): Resolved | null {
+function resolveIn(db: Db, name: string, mode: DlcMode, noSearch = false): Resolved | null {
   const exact = db.prepare(`SELECT ${PROVENANCE_COLUMNS} FROM pages WHERE title = ? COLLATE NOCASE`).get(name) as PageRecord | undefined;
   if (exact) return toResolved(db, exact, 'exact');
 
@@ -94,7 +94,7 @@ function resolveIn(db: Db, name: string, mode: DlcMode): Resolved | null {
   const entity = db.prepare(`SELECT ${PROVENANCE_COLUMNS.split(', ').map((c) => `p.${c}`).join(', ')} FROM entities e JOIN pages p ON p.id = e.page_id WHERE e.name = ? COLLATE NOCASE`).get(name) as PageRecord | undefined;
   if (entity) return toResolved(db, entity, 'entity');
 
-  const query = ftsQuery(name);
+  const query = noSearch ? null : ftsQuery(name);
   if (!query) return null;
   // A guess the caller can't use is worse than none: try the mode's own pages first, and only fall
   // back to the unfiltered top hit (still reported and then gated) when nothing permitted matches at
@@ -111,6 +111,11 @@ export interface ResolveOptions {
    * and a cache entry from an older visit must not quietly displace it on every other call.
    */
   preferLocal?: boolean;
+  /**
+   * Exact title, redirect and entity name only; never the full-text guess. For callers resolving many
+   * names they did not type (every item on a build), where a guess would silently relabel an item.
+   */
+  noSearch?: boolean;
 }
 
 /**
@@ -172,13 +177,13 @@ export function resolveName(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_
 
   for (const db of order) {
     if (!db) continue;
-    const resolved = resolveIn(db, trimmed, mode);
+    const resolved = resolveIn(db, trimmed, mode, opts.noSearch);
     if (resolved && resolved.match !== 'search') { found = resolved; break; }
   }
   if (!found) {
     for (const db of order) {
       if (!db) continue;
-      const resolved = resolveIn(db, trimmed, mode);
+      const resolved = resolveIn(db, trimmed, mode, opts.noSearch);
       if (resolved) { found = resolved; break; }
     }
   }

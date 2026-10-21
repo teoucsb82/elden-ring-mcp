@@ -12,6 +12,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
+import { buildInfo } from '../query/builds.js';
 import { openDbs } from '../query/dbs.js';
 import { bossInfo, getPage, itemStats, questSteps, search, sourcesStatus, whereIs } from '../query/lookups.js';
 import { cacheFextralife } from '../store/local.js';
@@ -32,7 +33,9 @@ Results are base game only by default. Pass dlc: "all" to include Shadow of the 
 
 A result with error: "data_stale" means the shipped snapshot predates this server's schema; tell the user to run npm run extract (or fetch a newer data release). It is not missing data.
 
-A result with not_found and no reason means the data does not cover it; say so instead of guessing, or retry with fetch: true to cache the Fextralife page. Fandom and Fextralife sometimes disagree on numbers; when both are present, show both with their sources. Directions from the wiki may omit prerequisites; state prerequisites the result lists.`;
+A result with not_found and no reason means the data does not cover it; say so instead of guessing, or retry with fetch: true to cache the Fextralife page. Fandom and Fextralife sometimes disagree on numbers; when both are present, show both with their sources. Directions from the wiki may omit prerequisites; state prerequisites the result lists.
+
+The build tool reads Fextralife build pages from the local cache (npm run fetch-builds); cite the provenance it returns. Each gear item carries display (name plus its type from the Fandom data, e.g. "Uchigatana (Katana)"); resolved: false means the Fandom data has no such item, so say so instead of guessing its type. listed_as means the build page filed the item under a different section than its real type. A build's dlc and dlc_basis are derived (SOTE Builds list membership or DLC items), not a wiki label; give the basis when it matters.`;
 
 export const server = new McpServer({ name: 'elden-ring', version: '0.1.0' }, { instructions: INSTRUCTIONS });
 const dbs = openDbs();
@@ -111,10 +114,10 @@ server.registerTool('quest_steps', {
 
 server.registerTool('item_stats', {
   title: 'Item stats',
-  description: 'Requirements, scaling, weight and effects for weapons, spells, talismans and armor. Give `name` for one item: it wins over the other filters, but `kind` must agree with the item or you get kind_mismatch. Otherwise filter: kind, scaling_stat (weapons; min_scaling defaults to E, i.e. scales with that stat at all, and min_scaling alone is an error), max_req per stat (items whose requirement the wiki does not state are excluded, not treated as 0). No match returns not_found.',
+  description: 'Requirements, scaling, weight and effects for weapons, spells, talismans and armor, plus type/effect/FP cost for other items (kind "item": tools, Ashes of War, crystal tears, cookbooks, consumables). Give `name` for one item: it wins over the other filters, but `kind` must agree with the item or you get kind_mismatch. A name nothing is called returns reason: "guess_only" with the closest page, never that page\'s stats. `missing` lists fields the wiki itself marks as missing: blanks there are unknown, not zero. Otherwise filter: kind, scaling_stat (weapons; min_scaling defaults to E, i.e. scales with that stat at all, and min_scaling alone is an error), max_req per stat (items whose requirement the wiki does not state are excluded, not treated as 0). No match returns not_found.',
   inputSchema: {
     name: z.string().optional().describe('One item by name'),
-    kind: z.enum(['weapon', 'spell', 'talisman', 'armor']).optional(),
+    kind: z.enum(['weapon', 'spell', 'talisman', 'armor', 'item']).optional(),
     scaling_stat: z.enum(['str', 'dex', 'int', 'fai', 'arc']).optional(),
     min_scaling: z.enum(['E', 'D', 'C', 'B', 'A', 'S']).optional(),
     max_req: z.object({ str: z.number(), dex: z.number(), int: z.number(), fai: z.number(), arc: z.number() }).partial().strict().optional().describe('Only items whose requirement for each given stat is at or under this'),
@@ -130,6 +133,20 @@ server.registerTool('boss', {
   inputSchema: { name: z.string().min(1), fetch: fetchArg, dlc: dlcArg },
   annotations: MAY_FETCH,
 }, async ({ name, fetch, dlc }) => withFetch(name, fetch, () => bossInfo(dbs, name, dlc, { preferLocal: fetch === true })));
+
+server.registerTool('build', {
+  title: 'Fextralife builds',
+  description: 'Fextralife builds cached locally. Give `name` for one build: class, level, stat focus, minimum stats, flask spread, summary and every gear item with its type ("Uchigatana (Katana)"), slot, affinity and alternates. Otherwise list builds filtered by stat (focus or primary stat: str/dex/int/fai/arc or the full name), item (any slot, e.g. "Godfrey Icon"), weapon, and dlc. Builds carry no per-stat spread: Fextralife pages list only focus stats and minimum requirements.',
+  inputSchema: {
+    name: z.string().optional().describe('One build, e.g. "Blood Dancer" or "Blood Dancer Build"'),
+    stat: z.string().optional().describe('Focus or primary stat: str, dex, int, fai, arc, or Vigor/Mind/etc.'),
+    item: z.string().optional().describe('Builds that use this item in any slot, exact name'),
+    weapon: z.string().optional().describe('Builds that use this weapon, exact name'),
+    limit: z.number().int().min(1).max(200).optional().describe('Max rows (default 25)'),
+    dlc: dlcArg,
+  },
+  annotations: READ_ONLY,
+}, async ({ dlc, ...filter }) => { try { return reply(buildInfo(dbs, filter, dlc)); } catch (error) { return fail(error); } });
 
 server.registerTool('sources_status', {
   title: 'Data sources status',

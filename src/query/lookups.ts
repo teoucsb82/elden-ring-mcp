@@ -1,6 +1,7 @@
 import type { Db } from '../db/open.js';
 import { SCALING_ORDER } from '../extract/common.js';
 import { parryFromWikitext } from '../extract/boss.js';
+import { isPlaceholder } from '../extract/acquisition.js';
 import { BREAK_PATTERN, type QuestStep } from '../extract/quest.js';
 import { bossNotes, encountersFor, namesQuery } from './boss-notes.js';
 import { DEFAULT_DLC_MODE, dlcOf, dlcPredicate, type Dbs, type DlcMode } from './dbs.js';
@@ -154,8 +155,35 @@ const emptyPage = (query: string, r: Resolved) => ({
 const noStats = (query: string, r: Resolved) => ({
   not_found: true as const, query, reason: 'no_stats' as const, page: r.provenance.title,
   provenance: r.provenance, match: r.match,
-  hint: `The page "${r.provenance.title}" is in the snapshot but is not a weapon, spell, talisman or armor piece, so it has no stats. Use get_page, where_is or boss for it.`,
+  hint: `The page "${r.provenance.title}" is in the snapshot but is not a weapon, spell, talisman, armor piece or item (tool, Ash of War, crystal tear, cookbook, consumable), so it has no stats. Use get_page, where_is or boss for it.`,
 });
+
+/**
+ * The name resolved only through the full-text fallback: no page, redirect or item is called this.
+ * item_stats used to hand back the guessed page's rows as if they were the item asked for, so
+ * "Horned Warrior Gauntlets" answered with Divine Bird Warrior Gauntlets' weight and poise.
+ */
+const guessOnly = (query: string, r: Resolved) => ({
+  not_found: true as const, query, reason: 'guess_only' as const, closest: r.provenance.title,
+  provenance: r.provenance, match: r.match,
+  hint: `Nothing in the snapshot is named "${query}". The closest full-text match is "${r.provenance.title}", a different page, so its stats are not returned. Check the spelling, or pass fetch: true to get_page to cache the Fextralife page.`,
+});
+
+const tableExists = (db: Db, table: string): boolean =>
+  db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !== undefined;
+
+/**
+ * Fields the wiki itself marks as missing ({{missing data|stats}}), so a blank reads as unknown and
+ * never as zero. Empty on a snapshot extracted before the missing_data table existed.
+ */
+function missingOf(r: Resolved, extra: string[] = []): { missing?: string[]; missing_hint?: string } {
+  const row = tableExists(r.db, 'missing_data')
+    ? r.db.prepare('SELECT fields FROM missing_data WHERE page_id = ?').get(r.pageId) as { fields: string } | undefined
+    : undefined;
+  const missing = [...new Set([...(row ? parsePrereqs(row.fields) : []), ...extra])];
+  if (!missing.length) return {};
+  return { missing, missing_hint: `The wiki page has no ${missing.join(' or ')} yet (marked missing, or left as an empty template). Blank values are unknown, not zero. Pass fetch: true to get_page for the Fextralife copy.` };
+}
 
 /** The page was found and the section was not: naming the page's real headings says what to ask for next. */
 const sectionNotFound = (r: Resolved, section: string, headings: string[]) => ({
@@ -197,6 +225,9 @@ export function whereIs(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE
   const r = outcome.resolved;
   const row = r.db.prepare('SELECT method, location_text, nearest_grace, prereqs, missable FROM acquisition WHERE page_id = ?').get(r.pageId) as
     { method: string; location_text: string; nearest_grace: string | null; prereqs: string; missable: number } | undefined;
+  const sections = sectionsOf(r, /acquisition|location|where to find|how to get/i);
+  // The wiki does not always tag an unfilled location ("**Location**: -"); an empty template is the same gap.
+  const placeholderOnly = !row && sections.length > 0 && sections.every((section) => isPlaceholder(section.markdown));
   return {
     provenance: r.provenance,
     match: r.match,
@@ -204,7 +235,8 @@ export function whereIs(dbs: Dbs, name: string, mode: DlcMode = DEFAULT_DLC_MODE
     dlc: r.dlc,
     has_dlc_sections: r.hasDlcSections,
     acquisition: row ? { ...row, prereqs: parsePrereqs(row.prereqs), missable: row.missable === 1 } : null,
-    sections: sectionsOf(r, /acquisition|location|where to find|how to get/i),
+    sections,
+    ...missingOf(r, placeholderOnly ? ['location'] : []),
   };
 }
 
@@ -217,7 +249,7 @@ export function questSteps(dbs: Dbs, npc: string, mode: DlcMode = DEFAULT_DLC_MO
   return { provenance: r.provenance, match: r.match, alternates: r.alternates, dlc: r.dlc, has_dlc_sections: r.hasDlcSections, steps, warnings: notes, ...(steps.length ? {} : { sections: sectionsOf(r, /quest/i) }) };
 }
 
-const KIND_TABLE = { weapon: 'weapons', spell: 'spells', talisman: 'talismans', armor: 'armor' } as const;
+const KIND_TABLE = { weapon: 'weapons', spell: 'spells', talisman: 'talismans', armor: 'armor', item: 'items' } as const;
 type Kind = keyof typeof KIND_TABLE;
 export const STATS = ['str', 'dex', 'int', 'fai', 'arc'] as const;
 type Stat = (typeof STATS)[number];
@@ -226,7 +258,7 @@ type Stat = (typeof STATS)[number];
 const isStat = (value: string): value is Stat => (STATS as readonly string[]).includes(value);
 
 /** Requirement columns each table actually has. A kind that cannot express a supplied filter is skipped, never returned unfiltered. */
-const REQ_STATS: Record<Kind, readonly Stat[]> = { weapon: STATS, spell: ['int', 'fai', 'arc'], talisman: [], armor: [] };
+const REQ_STATS: Record<Kind, readonly Stat[]> = { weapon: STATS, spell: ['int', 'fai', 'arc'], talisman: [], armor: [], item: [] };
 
 function provenanceOf(db: Db, pageId: number): Provenance {
   return db.prepare('SELECT source, title, url, revid, fetched_at, license FROM pages WHERE id = ?').get(pageId) as Provenance;
@@ -242,13 +274,16 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
     const outcome = resolveFor(dbs, filter.name, mode);
     if (outcome.kind !== 'ok') return outcome.miss;
     const r = outcome.resolved;
-    const rows = (Object.entries(KIND_TABLE) as [Kind, string][]).flatMap(([kind, table]) =>
+    if (r.match === 'search') return guessOnly(filter.name, r);
+    // A snapshot extracted before the items table existed has no such table; skip it, don't fail.
+    const rows = (Object.entries(KIND_TABLE) as [Kind, string][]).filter(([, table]) => tableExists(r.db, table)).flatMap(([kind, table]) =>
       (r.db.prepare(`SELECT * FROM ${table} WHERE page_id = ?`).all(r.pageId) as Record<string, unknown>[]).map((row) => ({ kind, ...row, provenance: r.provenance })));
     if (!rows.length) return noStats(filter.name, r);
-    if (!filter.kind) return { rows, dlc: r.dlc, has_dlc_sections: r.hasDlcSections };
+    const missing = missingOf(r);
+    if (!filter.kind) return { rows, dlc: r.dlc, has_dlc_sections: r.hasDlcSections, ...missing };
     // name + kind used to ignore kind, so asking for the spell "Uchigatana" handed back the katana.
     const matching = rows.filter((row) => row.kind === filter.kind);
-    if (matching.length) return { rows: matching, dlc: r.dlc, has_dlc_sections: r.hasDlcSections };
+    if (matching.length) return { rows: matching, dlc: r.dlc, has_dlc_sections: r.hasDlcSections, ...missing };
     const kinds = [...new Set(rows.map((row) => row.kind))].join(', ');
     return { error: 'kind_mismatch' as const, detail: `"${r.provenance.title}" is in the data as ${kinds}, not as a ${filter.kind}. Drop kind, or ask for the kind it actually is.` };
   }
@@ -275,6 +310,7 @@ export function itemStats(dbs: Dbs, filter: { name?: string; kind?: Kind; scalin
     if (!db) continue;
     for (const kind of kinds) {
       if (scaling && kind !== 'weapon') continue;
+      if (!tableExists(db, KIND_TABLE[kind])) continue;
       if (maxReq.some(([stat]) => !REQ_STATS[kind].includes(stat))) { skipped.add(kind); continue; }
       const where: string[] = [];
       const params: (string | number)[] = [];
@@ -373,6 +409,9 @@ export function sourcesStatus(dbs: Dbs) {
           failures: count(dbs.shipped, 'SELECT count(*) AS n FROM extract_failures'),
         }
       : null,
-    local: dbs.local ? { pages: count(dbs.local, 'SELECT count(*) AS n FROM pages') } : null,
+    local: dbs.local ? {
+      pages: count(dbs.local, 'SELECT count(*) AS n FROM pages'),
+      builds: dbs.local.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'builds'").get() ? count(dbs.local, 'SELECT count(*) AS n FROM builds') : 0,
+    } : null,
   };
 }

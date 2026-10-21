@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { FEXTRALIFE_PAGE_LIMIT, fetchFextralife, fextralifeUrl, htmlToWikiMarkdown, resetFextralifeSession } from '../src/sources/fextralife.js';
 import { cacheFextralife, localDbPath, openLocalDb } from '../src/store/local.js';
 import type { FetchLike } from '../src/sources/http.js';
+import { ITEM_HTML } from './fixtures/fextralife.js';
 
 const HTML = `<html><body><div id="sidebar">ads</div>
 <div id="wiki-content-block">
@@ -17,8 +18,8 @@ const HTML = `<html><body><div id="sidebar">ads</div>
 
 const ok = (body: string, status = 200) => ({ status, headers: { get: () => null }, text: async () => body });
 
-test('fextralifeUrl uses + for spaces', () => {
-  assert.equal(fextralifeUrl("Azur's Glintstone Staff"), "https://eldenring.wiki.fextralife.com/Azur's+Glintstone+Staff");
+test('fextralifeUrl uses _ for spaces (MediaWiki form)', () => {
+  assert.equal(fextralifeUrl("Azur's Glintstone Staff"), "https://eldenring.wiki.fextralife.com/Azur's_Glintstone_Staff");
 });
 
 test('fextralifeUrl percent-encodes path, query and fragment characters', () => {
@@ -26,7 +27,17 @@ test('fextralifeUrl percent-encodes path, query and fragment characters', () => 
   assert.equal(fextralifeUrl('../secret'), 'https://eldenring.wiki.fextralife.com/..%2Fsecret');
 });
 
-test('htmlToWikiMarkdown keeps only the content block with atx headings and no scripts', () => {
+test('htmlToWikiMarkdown reads the MediaWiki body (#mw-content-text) and drops widgets, scripts and the related-links footer', () => {
+  const md = htmlToWikiMarkdown(ITEM_HTML)!;
+  assert.match(md, /^## Where to find Azur's Glintstone Staff/m);
+  assert.match(md, /^### Notes/m);
+  assert.match(md, /Nearest grace: \[Church of the Cuckoo\]/);
+  assert.ok(!md.includes('ads'));
+  assert.ok(!md.includes('footer'));
+  assert.ok(!md.includes('track()'));
+});
+
+test('htmlToWikiMarkdown still reads the legacy content block with atx headings and no scripts', () => {
   const md = htmlToWikiMarkdown(HTML)!;
   assert.match(md, /^## Where to find Azur's Glintstone Staff/m);
   assert.match(md, /^### Notes/m);
@@ -70,10 +81,11 @@ test('one server process caps how many Fextralife pages it will fetch', async ()
 
 test('cacheFextralife stores a local-only page with Fextralife license; 404 returns null', async () => {
   const db = openLocalDb(join(mkdtempSync(join(tmpdir(), 'er-local-')), 'local.db'));
-  const fetchImpl: FetchLike = async (url) => (url.endsWith('Missing+Page') ? ok('', 404) : ok(HTML));
+  const fetchImpl: FetchLike = async (url) => (url.endsWith('Missing_Page') ? ok('', 404) : ok(HTML));
   const id = await cacheFextralife(db, "Azur's Glintstone Staff", { fetchImpl, minIntervalMs: 0, sleep: async () => {} });
   assert.ok(id);
   const row = db.prepare('SELECT source, revid, license, wikitext FROM pages WHERE id = ?').get(id) as Record<string, unknown>;
+  assert.equal((db.prepare('SELECT html FROM page_html WHERE page_id = ?').get(id) as { html: string }).html, HTML);
   assert.deepEqual(row, { source: 'fextralife', revid: null, license: 'All rights reserved (Fextralife). Local cache only; never redistributed.', wikitext: null });
   assert.equal(await cacheFextralife(db, 'Missing Page', { fetchImpl, minIntervalMs: 0, sleep: async () => {} }), null);
 });

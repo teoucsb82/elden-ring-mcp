@@ -32,3 +32,14 @@ export function matchingSections(db: Db, pageId: number, heading: RegExp): { hea
 export function sectionMarkdown(db: Db, pageId: number, heading: RegExp): string | null {
   return matchingSections(db, pageId, heading)[0]?.markdown ?? null;
 }
+
+/**
+ * Fandom's own gap marker, `{{missing data|stats, location}}`: the wiki says it lacks these, so a
+ * blank field on the page is unknown, not zero. `{{stub|missing data}}` is a different template.
+ */
+export function missingData(wikitext: string | null): string[] {
+  const match = wikitext ? /\{\{\s*missing data\s*(?:\|([^}]*))?\}\}/i.exec(wikitext) : null;
+  if (!match) return [];
+  const fields = (match[1] ?? '').split(/[,|]/).map((f) => f.trim().toLowerCase()).filter(Boolean);
+  return fields.length ? fields : ['data'];
+}
