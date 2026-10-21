@@ -5,3 +5,4 @@ data/*.db-*
 *.log
 .claude/worktrees/
 .superpowers/
+.playwright-mcp/
